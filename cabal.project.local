@@ -1,0 +1,6 @@
+--packages: ../husk-scheme
+--flags: +useffi
+--packages: ../irc-conduit
+--packages: ../plugins-maybeunjanked2
+--allow-newer: all
+tests: True
