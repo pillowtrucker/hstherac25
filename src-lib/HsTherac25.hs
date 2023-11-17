@@ -7,10 +7,6 @@ import Foreign.C.Types()
 import Foreign.C.String ( CString, newCString )
 import Foreign.StablePtr
     ( newStablePtr, StablePtr, deRefStablePtr )
-import Control.Concurrent.STM.TMVar
-    ( TMVar, takeTMVar, putTMVar, readTMVar, newTMVar )
-import Control.Concurrent.STM.TChan
-    ( TChan, readTChan, writeTChan, newTChan )
 import Control.Concurrent(forkIO, threadDelay)
 import Control.Monad (forever,when)
 import Data.Maybe(fromJust)
@@ -25,9 +21,9 @@ import Control.Concurrent.STM
       readTMVar,
       retry,
       writeTChan,
-      newTMVar,
+      newTMVarIO,
       newTChan )
-import Control.Lens ( makeFields, (^.), (%~), (.~) )
+import Control.Lens ( makeFields, (^.), (%~), (.~), ASetter, Getting)
 import System.Random(randomRIO)
 import qualified Data.Map.Strict as M
 
@@ -45,7 +41,7 @@ data BeamType = BeamTypeXRay | BeamTypeElectron | BeamTypeUndefined
   deriving (Eq,Show)
 btMap :: M.Map BeamTypeInt BeamType
 btMap = M.fromList [(1,BeamTypeXRay),(2,BeamTypeElectron),(3,BeamTypeUndefined)]
-  
+
 
 -- datent complete is actually "begin treatment"
 data ExtCallType = ExtCallSendMEOS | ExtCallToggleDatentComplete | ExtCallToggleEditingTakingPlace | ExtCallReset | ExtCallProceed
@@ -56,7 +52,7 @@ ectMap = M.fromList [(1,ExtCallSendMEOS),(2,ExtCallToggleDatentComplete),(3,ExtC
 data ExternalCall = ExternalCall {
   _ecType :: ExtCallType,
   _ecMEOS :: MEOS
-                    }  
+                    }
 
 type BeamEnergy = Int
 
@@ -72,7 +68,7 @@ newMEOS :: MEOS
 newMEOS = MEOS (BeamTypeUndefined, 1477) CollimatorPositionUndefined
 
 makeMEOSFromCParams :: BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> MEOS
-makeMEOSFromCParams bti cpi be = 
+makeMEOSFromCParams bti cpi be =
   let bt = fromJust $ M.lookup bti btMap
       cp = fromJust $ M.lookup cpi cpMap
   in
@@ -114,26 +110,26 @@ $(makeFields ''WrappedComms)
 
 -- all of the helper functions that aren't part of the therac software are mercifully doing most things atomically
 
+toggleBoolFieldInStruct :: ASetter a a Bool Bool -> TMVar a -> STM ()
+toggleBoolFieldInStruct ff ts = takeTMVar ts >>= \l -> putTMVar ts (ff %~ not $! l)
+
 -- BEGIN virtual task keyboardhandler - sets dataEntrycomplete when the cursor leaves the screen after committing Datent data B[egin], sets editingTakingPlace, sends MEOS every time it is changed on screen, sends R[eset] command, sends P[roceed]
+
 toggleEditingTakingPlace :: TMVar TheracState -> STM ()
-toggleEditingTakingPlace ts =
-  takeTMVar ts >>= \l -> putTMVar ts (editingTakingPlace %~ not $! l)
+toggleEditingTakingPlace = toggleBoolFieldInStruct editingTakingPlace
 
 toggleDatentComplete :: TMVar TheracState -> STM ()
-toggleDatentComplete ts =
-  takeTMVar ts >>= \l -> putTMVar ts (dataEntryComplete %~ not $! l)
-
+toggleDatentComplete = toggleBoolFieldInStruct dataEntryComplete
 
 proceedTreatment :: TMVar TheracState -> STM ()
-proceedTreatment ts = setTheracTPhase ts TP_PatientTreatment
+proceedTreatment = setTPhase TP_PatientTreatment
 
 setResetPending :: TMVar TheracState -> STM ()
-setResetPending ts =
-  takeTMVar ts >>= \l -> putTMVar ts (resetPending .~ True $ l)
+setResetPending = setFieldInStruct resetPending True
 
-setTheracConsoleMEOS :: TMVar TheracState -> MEOS -> STM ()
-setTheracConsoleMEOS ts nm = do
-  takeTMVar ts >>= \l -> putTMVar ts (consoleMeos .~ nm $ l)
+setTheracConsoleMEOS :: MEOS -> TMVar TheracState -> STM()
+setTheracConsoleMEOS = setFieldInStruct consoleMeos
+
 -- END virtual task keyboardhandler
 
 
@@ -141,33 +137,37 @@ handleExternalCalls :: TMVar TheracState -> TChan ExternalCall -> IO ()
 handleExternalCalls ts ecc = do
   ecall <- atomically $ readTChan ecc
   case ecall of
-    ExternalCall ExtCallReset _ -> atomically $ setResetPending ts >> return ()
-    ExternalCall ExtCallToggleDatentComplete _ -> atomically $ toggleDatentComplete ts >> return ()
-    ExternalCall ExtCallToggleEditingTakingPlace _ -> atomically $ toggleEditingTakingPlace ts >> return ()
-    ExternalCall ExtCallProceed _ -> atomically $ proceedTreatment ts >> return ()
-    ExternalCall ExtCallSendMEOS m -> atomically $ setTheracConsoleMEOS ts m >> return ()
+    ExternalCall ExtCallReset _ -> atomically $ setResetPending ts
+    ExternalCall ExtCallToggleDatentComplete _ -> atomically $ toggleDatentComplete ts
+    ExternalCall ExtCallToggleEditingTakingPlace _ -> atomically $ toggleEditingTakingPlace ts
+    ExternalCall ExtCallProceed _ -> atomically $ proceedTreatment ts
+    ExternalCall ExtCallSendMEOS m -> atomically $ setTheracConsoleMEOS m ts
   handleExternalCalls ts ecc
 
 
-setTheracTPhase :: TMVar TheracState -> TPhase -> STM ()
-setTheracTPhase ts tp = do
-  takeTMVar ts >>= \l -> putTMVar ts (tPhase .~ tp $ l)
+setFieldInStruct :: ASetter a1 a1 a2 b -> b -> TMVar a1 -> STM ()
+setFieldInStruct ff fv ts = takeTMVar ts >>= \l -> putTMVar ts (ff .~ fv $ l)
 
+setTPhase :: HasTPhase a1 b => b -> TMVar a1 -> STM ()
+setTPhase = setFieldInStruct tPhase
+
+readFieldFromStruct :: Getting b s b -> TMVar s -> STM b
+readFieldFromStruct ff ts = readTMVar ts >>= \l -> return $ l ^. ff
 
 -- task - treatment monitor - the supervisor task basically
 treat :: TMVar TheracState -> IO ()
 treat ts = do
-  curTPhase <- atomically $ readTMVar ts >>= \l -> return $ l ^. tPhase
+  curTPhase <- atomically $ readFieldFromStruct tPhase ts
   case curTPhase of
-    TP_Reset -> atomically $ resetTherac ts >> return ()
+    TP_Reset -> atomically $ resetTherac ts
     TP_Datent -> datent ts
-    TP_SetupDone -> atomically $ setTPhase ts TP_PatientTreatment -- it's probably fine to just skip over this
+    TP_SetupDone -> atomically $ setTPhase TP_PatientTreatment ts -- it's probably fine to just skip over this
     TP_SetupTest -> setupTest ts
     TP_PatientTreatment -> zapTheSpecimen ts
     TP_PauseTreatment -> do
-      mc <- atomically $ readTMVar ts >>= \l -> return $ l ^. malfunctionCount
+      mc <- atomically $ readFieldFromStruct malfunctionCount ts
       if mc > 4 then
-        atomically $ setTPhase ts TP_Reset
+        atomically $ setTPhase TP_Reset ts
       else
         waitForUnpause ts
     TP_TerminateTreatment -> waitForReset ts
@@ -176,15 +176,15 @@ treat ts = do
 
 waitForUnpause :: TMVar TheracState -> IO ()
 waitForUnpause ts = atomically $ do
-  ts' <- readTMVar ts
-  case ts' ^. tPhase of
+  tp <- readFieldFromStruct tPhase ts
+  case tp of
     TP_PauseTreatment -> retry
     _ -> return ()
 waitForReset :: TMVar TheracState -> IO ()
 waitForReset ts = atomically $ do
-  tsrp <- readTMVar ts >>= \l -> return $ l ^. resetPending
-  if (tsrp) then setTPhase ts TP_Reset else retry
-    
+  tsrp <- readFieldFromStruct resetPending ts
+  if tsrp then setTPhase TP_Reset ts else retry
+
 -- BEGIN zapping
 zapTheSpecimen :: TMVar TheracState -> IO ()
 zapTheSpecimen ts = do
@@ -193,14 +193,14 @@ zapTheSpecimen ts = do
   let tscm = ts' ^. consoleMeos
       tshm  = ts' ^. hardwareMeos
       mc  = ts' ^. malfunctionCount
-  atomically $ if(tscm /= tshm) then
-                 putTMVar ts $ (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ "MALFUNCTION 54" $ ts')))
+  atomically $ if tscm /= tshm then
+                 putTMVar ts (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ "MALFUNCTION 54" $ ts')))
                  -- I'm not sure if both the race condition and the overflow bug had the same error number but I'm assuming they did.
                else
                  if reallyGoodNumber > 22 then
-                   putTMVar ts $ (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ ("MALFUNCTION " ++ (show reallyGoodNumber)) $ ts'))) -- simulate shitty fucking computer doodad breaking all the time to prime people to P(roceed) repeatedly and carelessly
+                   putTMVar ts (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ ("MALFUNCTION " ++ show reallyGoodNumber) $ ts'))) -- simulate shitty fucking computer doodad breaking all the time to prime people to P(roceed) repeatedly and carelessly
                  else
-                   putTMVar ts $ (tPhase .~ TP_TerminateTreatment $ (treatmentOutcome .~ "TREATMENT OK" $ ts'))
+                   putTMVar ts (tPhase .~ TP_TerminateTreatment $ (treatmentOutcome .~ "TREATMENT OK" $ ts'))
 -- END zapping
 
 
@@ -218,13 +218,13 @@ externalCallWrap mywc ecti bti cpi be = do
 foreign export ccall startMachine :: IO (StablePtr WrappedComms)
 startMachine :: IO (StablePtr WrappedComms)
 startMachine = do
-  ts <- atomically $ newTMVar newTherac
-  ecc <- atomically $ newTChan
-  eCallsThread <- forkIO $ handleExternalCalls ts ecc
-  treatThread <- forkIO $ treat ts
-  housekeeperThread <- forkIO $ housekeeper ts
-  wc <- newStablePtr $ WrappedComms ts ecc
-  return wc
+  ts <- newTMVarIO newTherac
+  ecc <- atomically newTChan
+  _ <- forkIO $ handleExternalCalls ts ecc
+  _ <- forkIO $ treat ts
+  _ <- forkIO $ housekeeper ts
+  newStablePtr $ WrappedComms ts ecc
+  
 
 -- external return TREATMENT SUCCESS (xxxx rads delivered) | MALFUNCTION YY (xxxx rads delivered)
 foreign export ccall getTreatmentOutcome :: StablePtr WrappedComms -> IO CString
@@ -233,8 +233,8 @@ getTreatmentOutcome mywc = do
   mywc' <- deRefStablePtr mywc
   let ts = _wrappedCommsTheracState mywc'
   ts' <- atomically $ readTMVar ts
-  cs <- newCString $ ts' ^. treatmentOutcome
-  return cs
+  newCString $ ts' ^. treatmentOutcome
+  
 
 
 
@@ -256,7 +256,7 @@ setupTest ts = do
      255 -> putTMVar ts $ ts' {_theracStateClass3 = 0, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
      0 -> putTMVar ts $ ts' {_theracStateClass3 = 1, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
      _ -> putTMVar ts $ ts' {_theracStateClass3 = c3+1, _theracStateClass3Ignore = False, _theracStateTPhase = nextTPhase}
-     
+
 -- END TP_SetupTest phase
 
 -- BEGIN `housekeeper` stuff
@@ -266,7 +266,7 @@ lmtchk ts = do
   ts' <- readTMVar ts
   let c3i = ts' ^. class3Ignore
   if c3i then
-    takeTMVar ts >>= \l -> putTMVar ts (fSmall .~ False $ l)
+    setFieldInStruct fSmall False ts
   else chkcol ts
 
 -- `housekeeper` subroutine - checks if CollimatorPosition is consistent with MEOS CollimatorPosition (_theracStateConsoleMeos vs _theracStateHardwareMeos), sets F$mall if not
@@ -275,38 +275,32 @@ chkcol ts = do
  ts' <- readTMVar ts
  let tscmcol = ts' ^. consoleMeos . handParams
  let tshmcol = ts' ^. hardwareMeos . handParams
- if (tscmcol /= tshmcol) then
-   takeTMVar ts >>= \l -> putTMVar ts (fSmall .~ True $ l)
- else
-   takeTMVar ts >>= \l -> putTMVar ts (fSmall .~ False $ l)
+ setFieldInStruct fSmall (tscmcol /= tshmcol) ts
 
 syncCollimator :: TMVar TheracState -> STM ()
 syncCollimator ts = do
   ts' <- takeTMVar ts
   let tscmcol = ts' ^. consoleMeos . handParams
   putTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSHandParams = tscmcol}) $ ts'
-  
+
 -- task - runs concurrently to other stuff - displays messages to monitor, checks setup verification, decodes info, sets collimator position
 housekeeper :: TMVar TheracState -> IO ()
 housekeeper ts = forever $ do
   threadDelay 1666 -- check 60 times per second because I couldn't think of a good way to make this wait cooperatively with STM retry and I don't want to benchmark how fast a cpu core can do this
-  ts' <- atomically $ readTMVar ts
-  let c3i = ts' ^. class3Ignore
+  c3i <- atomically $ readFieldFromStruct class3Ignore ts
   if c3i then return () else atomically $ syncCollimator ts
   atomically $ lmtchk ts
-      
+
 -- END `housekeeper` stuff
 
 
 -- BEGIN TP_Datent stuff
 
 setBendingMagnetFlag :: TMVar TheracState -> STM ()
-setBendingMagnetFlag ts =
-  takeTMVar ts >>= \l -> putTMVar ts (dataEntryComplete .~ True $ l)
+setBendingMagnetFlag = setFieldInStruct dataEntryComplete True
 
 unsetBendingMagnetFlag :: TMVar TheracState -> STM ()
-unsetBendingMagnetFlag ts =
-  takeTMVar ts >>= \l -> putTMVar ts (bendingMagnetFlag .~ False $ l)
+unsetBendingMagnetFlag = setFieldInStruct bendingMagnetFlag False
 
 -- subroutine - part of `treat` TP_Datent - spin until hysteresis delay expired
 -- pseudocode adapted from Leveson 2010
@@ -320,10 +314,10 @@ unsetBendingMagnetFlag ts =
 pTime :: TMVar TheracState -> IO Bool
 pTime ts = do
   -- it's intentional that we use the worst method of reading each value to simulate american engineering
-  tscm' <- atomically $ readTMVar ts >>= \l -> return $ l ^. consoleMeos
-  tsbmf <- atomically $ readTMVar ts >>= \l -> return $ l ^. bendingMagnetFlag
-  tsetp <- atomically $ readTMVar ts >>= \l -> return $ l ^. editingTakingPlace
-  tscm'' <- atomically $ readTMVar ts >>= \l -> return $ l ^. consoleMeos -- maybe the check between specified and programmed values was actually less nonsensical in the real hardware but this was reported
+  tscm' <- atomically $ readFieldFromStruct consoleMeos ts
+  tsbmf <- atomically $ readFieldFromStruct bendingMagnetFlag ts
+  tsetp <- atomically $ readFieldFromStruct editingTakingPlace ts
+  tscm'' <- atomically $ readFieldFromStruct consoleMeos ts -- maybe the check between specified and programmed values was actually less nonsensical in the real hardware but this was reported
   -- ^ maybe this is where they were trying to check for cosmic rays or some shit ?
 
 
@@ -333,7 +327,7 @@ pTime ts = do
       threadDelay 2000000
       atomically $ unsetBendingMagnetFlag ts -- yes, we unset this after the first execution of the loop
       return False
-      
+
 --copyMEOSFromConsole :: TMVar TheracState -> STM ()
 --copyMEOSFromConsole ts = do
 --  takeTMVar ts >>= \l -> putTMVar ts $ hardwareMeos .~ (l ^. consoleMeos) $ l
@@ -341,7 +335,7 @@ pTime ts = do
 copyBeamAndEnergyToHardwareMEOS :: TMVar TheracState -> BeamType -> BeamEnergy -> STM ()
 copyBeamAndEnergyToHardwareMEOS ts wantedBeamType wantedBeamEnergy = do
   ts' <- takeTMVar ts
-  putTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSDatentParams = (wantedBeamType, wantedBeamEnergy)}) $ ts'  
+  putTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSDatentParams = (wantedBeamType, wantedBeamEnergy)}) $ ts'
 
 -- subroutine `magnet` - set bending magnet - part of `treat` TP_Datent
 -- pseudocode adapted from Leveson 2010
@@ -353,16 +347,17 @@ copyBeamAndEnergyToHardwareMEOS ts wantedBeamType wantedBeamEnergy = do
 magnet :: TMVar TheracState -> BeamType -> BeamEnergy -> IO Bool
 magnet ts wantedBeamType wantedBeamEnergy = do
   atomically $ setBendingMagnetFlag ts
+  let numLoops = 5 :: Int
   let setTheMagnet n = do
         if n == 1 then return False
           else do
             atomically $ copyBeamAndEnergyToHardwareMEOS ts wantedBeamType wantedBeamEnergy
             shouldSC <- pTime ts -- no I will not be raising an exception to simulate a short-circuit, fuck ghc exceptions
-            if (shouldSC) then
+            if shouldSC then
               return True
             else
               setTheMagnet (n-1)
-  setTheMagnet 5
+  setTheMagnet numLoops
 
 -- subroutine `TP_Datent` - part of `treat`
 -- pseudocode adapted from Leveson 2010
@@ -375,23 +370,18 @@ datent :: TMVar TheracState -> IO ()
 datent ts = do
   (consoleMEOSBeamType,consoleMEOSBeamEnergy) <- atomically $ readTMVar ts >>= \l -> return $ l ^. consoleMeos . datentParams
   (hardwareMEOSBeamType,hardwareMEOSBeamEnergy)<- atomically $ readTMVar ts >>= \l -> return $ l ^. hardwareMeos . datentParams
-  sc <- if (hardwareMEOSBeamType) /= consoleMEOSBeamType || (consoleMEOSBeamEnergy /= hardwareMEOSBeamEnergy) then 
+  sc <- if (hardwareMEOSBeamType /= consoleMEOSBeamType) || (consoleMEOSBeamEnergy /= hardwareMEOSBeamEnergy) then
           magnet ts consoleMEOSBeamType consoleMEOSBeamEnergy
         else return False
   if not sc then do
-    tsdec <- atomically $ readTMVar ts >>= \l -> return $ l ^. dataEntryComplete
+    tsdec <- atomically $ readFieldFromStruct dataEntryComplete ts
     if tsdec then
-      atomically $ setTPhase ts TP_SetupTest
+      atomically $ setTPhase TP_SetupTest ts
     else do
-      tsrp <- atomically $ readTMVar ts >>= \l -> return $ l ^. resetPending
-      when tsrp $ atomically $ setTPhase ts TP_Reset
-
+      tsrp <- atomically $ readFieldFromStruct resetPending ts
+      when tsrp $ atomically $ setTPhase TP_Reset ts
   else do
-    atomically $ setTPhase ts TP_Datent
+    atomically $ setTPhase TP_Datent ts
     return ()
 
 -- END TP_Datent stuff
-setTPhase :: TMVar TheracState -> TPhase -> STM ()
-setTPhase ts ph = do
-  takeTMVar ts >>= \l -> putTMVar ts $ tPhase .~ ph $ l
-
