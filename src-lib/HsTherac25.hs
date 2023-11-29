@@ -2,7 +2,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
-module HsTherac25(externalCallWrap,startMachine,getTreatmentOutcome,theracState,externalCalls,TheracState(..),WrappedComms(..)) where
+module HsTherac25(externalCallWrap,startMachine,requestStateInfo,theracState,externalCalls,TheracState(..),WrappedComms(..)) where
 import Foreign.C.Types()
 import Foreign.C.String ( CString, newCString )
 import Foreign.StablePtr
@@ -24,6 +24,7 @@ import Control.Concurrent.STM
       newTMVarIO,
       newTChan )
 import Control.Lens ( makeFields, (^.), (%~), (.~), ASetter, Getting)
+import Control.Lens.Tuple ( Field1(_1), Field2(_2) )
 import System.Random(randomRIO)
 import qualified Data.Map.Strict as M
 
@@ -205,6 +206,7 @@ zapTheSpecimen ts = do
 
 
 
+
 foreign export ccall externalCallWrap :: StablePtr WrappedComms -> ExtCallTypeInt -> BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> IO ()
 externalCallWrap :: StablePtr WrappedComms -> ExtCallTypeInt -> BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> IO ()
 externalCallWrap mywc ecti bti cpi be = do
@@ -226,17 +228,27 @@ startMachine = do
   newStablePtr $ WrappedComms ts ecc
   
 
--- external return TREATMENT SUCCESS (xxxx rads delivered) | MALFUNCTION YY (xxxx rads delivered)
-foreign export ccall getTreatmentOutcome :: StablePtr WrappedComms -> IO CString
-getTreatmentOutcome :: StablePtr WrappedComms -> IO CString
-getTreatmentOutcome mywc = do
+data StateInfoRequest = RequestTreatmentOutcome| RequestActiveSubsystem | RequestTreatmentState | RequestReason | RequestBeamMode | RequestBeamEnergy
+type SIRInt = Int
+
+siriMap :: M.Map Int StateInfoRequest
+siriMap = M.fromList [(1,RequestTreatmentOutcome),(2,RequestActiveSubsystem),(3,RequestTreatmentState),(4,RequestReason),(5,RequestBeamMode),(6,RequestBeamEnergy)]
+
+-- external return requested state info
+foreign export ccall requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
+requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
+requestStateInfo mywc siri = do
   mywc' <- deRefStablePtr mywc
   let ts = _wrappedCommsTheracState mywc'
+
   ts' <- atomically $ readTMVar ts
-  newCString $ ts' ^. treatmentOutcome
-  
-
-
+  newCString $ case fromJust $ M.lookup siri siriMap of
+                 RequestTreatmentOutcome -> ts' ^. treatmentOutcome
+                 RequestActiveSubsystem -> if (ts' ^. dataEntryComplete) then "TREAT" else "DATA ENTRY"
+                 RequestTreatmentState -> show $ ts' ^. tPhase
+                 RequestReason -> if (ts' ^. treatmentOutcome == "TREATMENT OK" || ts' ^. treatmentOutcome == "" )then "OPERATOR" else "MALFUNCTION"
+                 RequestBeamMode -> show $ ts' ^. hardwareMeos . datentParams . _1
+                 RequestBeamEnergy -> show $ ts' ^. hardwareMeos . datentParams ._2
 
 -- BEGIN TP_SetupTest phase
 

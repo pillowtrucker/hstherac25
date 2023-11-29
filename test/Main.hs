@@ -25,6 +25,12 @@ main = do
   let simulateProceedButton = externalCallWrap wc' 5 1 1 25000
   let simulateToggleEditingTakingPlace = externalCallWrap wc' 3 1 1 25000
   let simulateResetButton = externalCallWrap wc' 4 1 1 25000
+  let requestTreatmentOutcome = requestStateInfo wc' 1
+  let requestActiveSubsystem = requestStateInfo wc' 2
+  let requestTreatmentState = requestStateInfo wc' 3
+  let requestReason = requestStateInfo wc' 4
+  let requestBeamMode = requestStateInfo wc' 5
+  let requestBeamEnergy = requestStateInfo wc' 6
   let normalOperation = do
         simulateSendMeos 1 1 25000
         simulateToggleEditingTakingPlace
@@ -42,8 +48,13 @@ main = do
         simulateToggleDatentComplete
         
   let loop = do
-        outcome' <- getTreatmentOutcome wc'
+        outcome' <- requestTreatmentOutcome
         outcome <- peekCString outcome'
+        requestActiveSubsystem >>= peekCString >>= putStrLn
+        requestTreatmentState >>= peekCString >>= putStrLn
+        requestReason >>= peekCString >>= putStrLn
+        requestBeamMode >>= peekCString >>= putStrLn
+        requestBeamEnergy >>= peekCString >>= putStrLn
         putStrLn "TREATMENT OUTCOME:"
         case outcome of
           "MALFUNCTION 54" -> do
