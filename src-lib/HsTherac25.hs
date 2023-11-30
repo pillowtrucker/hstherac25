@@ -8,7 +8,7 @@ import Foreign.C.String ( CString, newCString )
 import Foreign.StablePtr
     ( newStablePtr, StablePtr, deRefStablePtr )
 import Control.Concurrent(forkIO, threadDelay)
-import Control.Monad (forever,when)
+import Control.Monad (forever,when,void)
 import Data.Maybe(fromJust)
 import Control.Concurrent.STM
     ( TMVar,
@@ -19,6 +19,7 @@ import Control.Concurrent.STM
       atomically,
       readTChan,
       readTMVar,
+      swapTMVar,
       retry,
       writeTChan,
       newTMVarIO,
@@ -98,7 +99,7 @@ newTherac = TheracState 1 True newMEOS TP_Datent False False True newMEOS "" Fal
 
 resetTherac :: TMVar TheracState -> STM ()
 resetTherac ts = do
-  ts' <- takeTMVar ts
+  ts' <- readTMVar ts
   let preservedClass3 = ts' ^. class3
       preservedClass3Ignore = ts' ^. class3Ignore
   putTMVar ts $ newTherac {_theracStateClass3 = preservedClass3, _theracStateClass3Ignore = preservedClass3Ignore}
@@ -158,6 +159,7 @@ readFieldFromStruct ff ts = readTMVar ts >>= \l -> return $ l ^. ff
 -- task - treatment monitor - the supervisor task basically
 treat :: TMVar TheracState -> IO ()
 treat ts = do
+  threadDelay 1666 
   curTPhase <- atomically $ readFieldFromStruct tPhase ts
   case curTPhase of
     TP_Reset -> atomically $ resetTherac ts
@@ -190,18 +192,18 @@ waitForReset ts = atomically $ do
 zapTheSpecimen :: TMVar TheracState -> IO ()
 zapTheSpecimen ts = do
   reallyGoodNumber <- randomRIO (12,53) :: IO Int
-  ts' <- atomically $ takeTMVar ts
+  ts' <- atomically $ readTMVar ts
   let tscm = ts' ^. consoleMeos
       tshm  = ts' ^. hardwareMeos
       mc  = ts' ^. malfunctionCount
   atomically $ if tscm /= tshm then
-                 putTMVar ts (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ "MALFUNCTION 54" $ ts')))
+                 void $ swapTMVar ts (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ "MALFUNCTION 54" $ ts')))
                  -- I'm not sure if both the race condition and the overflow bug had the same error number but I'm assuming they did.
                else
                  if reallyGoodNumber > 22 then
-                   putTMVar ts (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ ("MALFUNCTION " ++ show reallyGoodNumber) $ ts'))) -- simulate shitty fucking computer doodad breaking all the time to prime people to P(roceed) repeatedly and carelessly
+                   void $ swapTMVar ts (malfunctionCount .~ mc+1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ ("MALFUNCTION " ++ show reallyGoodNumber) $ ts'))) -- simulate shitty fucking computer doodad breaking all the time to prime people to P(roceed) repeatedly and carelessly
                  else
-                   putTMVar ts (tPhase .~ TP_TerminateTreatment $ (treatmentOutcome .~ "TREATMENT OK" $ ts'))
+                   void $ swapTMVar ts (tPhase .~ TP_TerminateTreatment $ (treatmentOutcome .~ "TREATMENT OK" $ ts'))
 -- END zapping
 
 
@@ -246,7 +248,7 @@ requestStateInfo mywc siri = do
                  RequestTreatmentOutcome -> ts' ^. treatmentOutcome
                  RequestActiveSubsystem -> if (ts' ^. dataEntryComplete) then "TREAT" else "DATA ENTRY"
                  RequestTreatmentState -> show $ ts' ^. tPhase
-                 RequestReason -> if (ts' ^. treatmentOutcome == "TREATMENT OK" || ts' ^. treatmentOutcome == "" )then "OPERATOR" else "MALFUNCTION"
+                 RequestReason -> let to = ts' ^. treatmentOutcome in if (to == "TREATMENT OK" || to == "" ) then "OPERATOR" else to
                  RequestBeamMode -> show $ ts' ^. hardwareMeos . datentParams . _1
                  RequestBeamEnergy -> show $ ts' ^. hardwareMeos . datentParams ._2
 
@@ -261,13 +263,13 @@ requestStateInfo mywc siri = do
 setupTest :: TMVar TheracState -> IO ()
 setupTest ts = do
   atomically $ do
-   ts' <- takeTMVar ts
+   ts' <- readTMVar ts
    let c3 = ts' ^. class3
    let nextTPhase = if ts' ^. fSmall then ts' ^. tPhase else TP_SetupDone
    case c3 of
-     255 -> putTMVar ts $ ts' {_theracStateClass3 = 0, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
-     0 -> putTMVar ts $ ts' {_theracStateClass3 = 1, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
-     _ -> putTMVar ts $ ts' {_theracStateClass3 = c3+1, _theracStateClass3Ignore = False, _theracStateTPhase = nextTPhase}
+     255 -> void $ swapTMVar ts $ ts' {_theracStateClass3 = 0, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
+     0 -> void $ swapTMVar ts $ ts' {_theracStateClass3 = 1, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
+     _ -> void $ swapTMVar ts $ ts' {_theracStateClass3 = c3+1, _theracStateClass3Ignore = False, _theracStateTPhase = nextTPhase}
 
 -- END TP_SetupTest phase
 
@@ -291,9 +293,9 @@ chkcol ts = do
 
 syncCollimator :: TMVar TheracState -> STM ()
 syncCollimator ts = do
-  ts' <- takeTMVar ts
+  ts' <- readTMVar ts
   let tscmcol = ts' ^. consoleMeos . handParams
-  putTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSHandParams = tscmcol}) $ ts'
+  void $ swapTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSHandParams = tscmcol}) $ ts'
 
 -- task - runs concurrently to other stuff - displays messages to monitor, checks setup verification, decodes info, sets collimator position
 housekeeper :: TMVar TheracState -> IO ()
@@ -346,8 +348,8 @@ pTime ts = do
 
 copyBeamAndEnergyToHardwareMEOS :: TMVar TheracState -> BeamType -> BeamEnergy -> STM ()
 copyBeamAndEnergyToHardwareMEOS ts wantedBeamType wantedBeamEnergy = do
-  ts' <- takeTMVar ts
-  putTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSDatentParams = (wantedBeamType, wantedBeamEnergy)}) $ ts'
+  ts' <- readTMVar ts
+  void $ swapTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSDatentParams = (wantedBeamType, wantedBeamEnergy)}) $ ts'
 
 -- subroutine `magnet` - set bending magnet - part of `treat` TP_Datent
 -- pseudocode adapted from Leveson 2010
