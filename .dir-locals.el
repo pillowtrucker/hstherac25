@@ -1,0 +1,6 @@
+((nil . ((projectile-project-compilation-cmd . "cabal build --enable-shared")
+	 (compile-command . "cabal build --enable-shared")
+         (projectile-project-run-cmd . "cabal run")
+	 )
+      )
+ )

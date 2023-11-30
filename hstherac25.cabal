@@ -52,7 +52,7 @@ extra-doc-files:    CHANGELOG.md
 -- extra-source-files:
 
 common blahflags
-    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
+    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -fPIE -fPIC
 -- don't forget to set those in hs_init when loading
 
 library
