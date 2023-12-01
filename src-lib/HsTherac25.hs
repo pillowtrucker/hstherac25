@@ -124,7 +124,11 @@ toggleDatentComplete :: TMVar TheracState -> STM ()
 toggleDatentComplete = toggleBoolFieldInStruct dataEntryComplete
 
 proceedTreatment :: TMVar TheracState -> STM ()
-proceedTreatment = setTPhase TP_PatientTreatment
+proceedTreatment ts = do
+  tp <- readFieldFromStruct tPhase ts
+  case tp of
+    TP_PauseTreatment -> setTPhase TP_PatientTreatment
+    _ -> return ()
 
 setResetPending :: TMVar TheracState -> STM ()
 setResetPending = setFieldInStruct resetPending True
