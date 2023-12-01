@@ -102,7 +102,7 @@ resetTherac ts = do
   ts' <- readTMVar ts
   let preservedClass3 = ts' ^. class3
       preservedClass3Ignore = ts' ^. class3Ignore
-  putTMVar ts $ newTherac {_theracStateClass3 = preservedClass3, _theracStateClass3Ignore = preservedClass3Ignore}
+  void $ swapTMVar ts $ newTherac {_theracStateClass3 = preservedClass3, _theracStateClass3Ignore = preservedClass3Ignore}
 
 data WrappedComms = WrappedComms {
   _wrappedCommsTheracState :: TMVar TheracState,
