@@ -127,7 +127,7 @@ proceedTreatment :: TMVar TheracState -> STM ()
 proceedTreatment ts = do
   tp <- readFieldFromStruct tPhase ts
   case tp of
-    TP_PauseTreatment -> setTPhase TP_PatientTreatment
+    TP_PauseTreatment -> setTPhase TP_PatientTreatment ts
     _ -> return ()
 
 setResetPending :: TMVar TheracState -> STM ()
