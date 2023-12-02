@@ -165,6 +165,7 @@ treat :: TMVar TheracState -> IO ()
 treat ts = do
   threadDelay 1666 
   curTPhase <- atomically $ readFieldFromStruct tPhase ts
+  isPendingReset <- atomically $ readFieldFromStruct resetPending ts
   case curTPhase of
     TP_Reset -> atomically $ resetTherac ts
     TP_Datent -> datent ts
@@ -342,7 +343,7 @@ pTime ts = do
   case (tsbmf,tsetp,tscm' /= tscm'') of
     (True,True,True) -> return True
     _ -> do
-      threadDelay 2000000
+      threadDelay 5000000
       atomically $ unsetBendingMagnetFlag ts -- yes, we unset this after the first execution of the loop
       return False
 
