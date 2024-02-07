@@ -69,7 +69,7 @@ library
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
-    build-depends:    base ^>=4.15.0.0,
+    build-depends:    base >=4.15.0.0,
                       containers >= 0.6.7,
                       lens >= 5.2.3,
                       random >= 1.2.1.1,
@@ -106,7 +106,7 @@ test-suite HsTherac25-test
     -- Test dependencies.
     build-depends:
                   hstherac25,
-                  base ^>=4.15.0.0,
+                  base >=4.15.0.0,
                   containers >= 0.6.7,
                   lens >= 5.2.3,
                   random >= 1.2.1.1,
