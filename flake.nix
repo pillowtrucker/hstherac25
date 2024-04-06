@@ -25,7 +25,7 @@
         flake = pkgs.hixProject.flake { };
       in flake // {
         legacyPackages = pkgs;
-
+        packages.lib = flake.packages."hstherac25:lib:hstherac25";
         packages.default = flake.packages."hstherac25:test:HsTherac25-test";
       });
 
