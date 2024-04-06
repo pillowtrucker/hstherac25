@@ -5,3 +5,4 @@ dist-newstyle/
 *.o
 *~
 .direnv
+result

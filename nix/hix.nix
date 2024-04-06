@@ -1,13 +1,12 @@
-{pkgs, ...}: {
+{ pkgs, ... }: {
   name = "hstherac25";
-  compiler-nix-name = "ghc964"; # Version of GHC to use
+  compiler-nix-name = "ghc982"; # Version of GHC to use
 
-  crossPlatforms = p: pkgs.lib.optionals pkgs.stdenv.hostPlatform.isx86_64 ([
-    p.mingwW64
-    # p.ghcjs # TODO GHCJS support for GHC 9.2
-  ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-    p.musl64
-  ]);
+  crossPlatforms = p:
+    pkgs.lib.optionals pkgs.stdenv.hostPlatform.isx86_64 ([
+      p.mingwW64
+      # p.ghcjs # TODO GHCJS support for GHC 9.2
+    ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ p.musl64 ]);
 
   # Tools to include in the development shell
   shell.tools.cabal = "latest";
