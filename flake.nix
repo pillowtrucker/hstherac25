@@ -1,42 +1,69 @@
 {
-  # This is a template created by `hix init`
-  inputs.haskellNix.url = "github:input-output-hk/haskell.nix";
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-  inputs.flake-utils.url = "github:numtide/flake-utils";
-  outputs = { self, nixpkgs, flake-utils, haskellNix }:
-    let
-      supportedSystems = [ "x86_64-linux" ];
-      #        [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
-    in flake-utils.lib.eachSystem supportedSystems (system:
-      let
-        overlays = [
-          haskellNix.overlay
-          (final: prev: {
-            hixProject = final.haskell-nix.hix.project {
-              src = ./.;
-              evalSystem = "x86_64-linux";
-            };
-          })
-        ];
-        pkgs = import nixpkgs {
-          inherit system overlays;
-          inherit (haskellNix) config;
-        };
-        flake = pkgs.hixProject.flake { };
-      in flake // {
-        legacyPackages = pkgs;
-        packages.lib = flake.packages."hstherac25:lib:hstherac25";
-        packages.default = flake.packages."hstherac25:test:HsTherac25-test";
-      });
-
-  # --- Flake Local Nix Configuration ----------------------------
-  nixConfig = {
-    # This sets the flake to use the IOG nix cache.
-    # Nix should ask for permission before using it,
-    # but remove it here if you do not want it to.
-    extra-substituters = [ "https://cache.iog.io" ];
-    extra-trusted-public-keys =
-      [ "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=" ];
-    allow-import-from-derivation = "true";
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    haskell-flake.url = "github:srid/haskell-flake";
   };
+  outputs = inputs@{ self, nixpkgs, flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = nixpkgs.lib.systems.flakeExposed;
+      imports = [ inputs.haskell-flake.flakeModule ];
+
+      perSystem = { self', pkgs, lib, ... }: {
+
+        # Typically, you just want a single project named "default". But
+        # multiple projects are also possible, each using different GHC version.
+        haskellProjects.default = {
+          # The base package set representing a specific GHC version.
+          # By default, this is pkgs.haskellPackages.
+          # You may also create your own. See https://community.flake.parts/haskell-flake/package-set
+          # basePackages = pkgs.haskellPackages;
+
+          # Extra package information. See https://community.flake.parts/haskell-flake/dependency
+          #
+          # Note that local packages are automatically included in `packages`
+          # (defined by `defaults.packages` option).
+          #
+          basePackages = pkgs.haskell.packages.ghc98;
+          projectRoot = builtins.toString (lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              ./src-lib
+              ./test
+              ./hstherac25.cabal
+              ./LICENSE
+            ];
+          });
+          packages = {
+            # aeson.source = "1.5.0.0"; # Hackage version override
+            # shower.source = inputs.shower;
+          };
+          settings = {
+            #  aeson = {
+            #    check = false;
+            #  };
+            #  relude = {
+            #    haddock = false;
+            #    broken = false;
+            #  };
+          };
+
+          devShell = {
+            # Enabled by default
+            # enable = true;
+
+            # Programs you want to make available in the shell.
+            # Default programs can be disabled by setting to 'null'
+            # tools = hp: { fourmolu = hp.fourmolu; ghcid = null; };
+
+            hlsCheck.enable =
+              pkgs.stdenv.isDarwin; # On darwin, sandbox is disabled, so HLS can use the network.
+          };
+        };
+
+        # haskell-flake doesn't set the default package, but you can do it here.
+        packages.lib = self'.packages."hstherac25:lib:hstherac25";
+        packages.default = self'.packages."hstherac25:tests:HsTherac25-test";
+      };
+    };
 }
