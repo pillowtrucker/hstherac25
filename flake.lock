@@ -5,11 +5,11 @@
         "nixpkgs-lib": "nixpkgs-lib"
       },
       "locked": {
-        "lastModified": 1712014858,
-        "narHash": "sha256-sB4SWl2lX95bExY2gMFG5HIzvva5AVMJd4Igm+GpZNw=",
+        "lastModified": 1714641030,
+        "narHash": "sha256-yzcRNDoyVP7+SCNX0wmuDju1NUCt8Dz9+lyUXEI0dbI=",
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "9126214d0a59633752a136528f5f3b9aa8565b7d",
+        "rev": "e5d10a24b66c3ea8f150e47dfdb0416ab7c3390e",
         "type": "github"
       },
       "original": {
@@ -20,11 +20,11 @@
     },
     "haskell-flake": {
       "locked": {
-        "lastModified": 1712823089,
-        "narHash": "sha256-AGkk2WK/E9mLcoEdfegZ1aYNh6HtOdPuEx4O+r44u3I=",
+        "lastModified": 1715478199,
+        "narHash": "sha256-h4mSCAfCWxUP4rM0FxoKeFIqBJAhgh8wm22LRjn3rAg=",
         "owner": "srid",
         "repo": "haskell-flake",
-        "rev": "92e393141a123c9695bc15dbe1ca0a1b7fef142b",
+        "rev": "988a78590c158c5fa0b4893de793c9c783b9d7e9",
         "type": "github"
       },
       "original": {
@@ -35,11 +35,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1712922921,
-        "narHash": "sha256-E7V4Py9KR/h8dvrbyOtPM+9RvpfJYie18Mb43HPAeAE=",
+        "lastModified": 1715689840,
+        "narHash": "sha256-MQ6sq4ezabqUSaI9fCztBQJco4C/SvYOLNRJiLW3BLo=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "feeff83e610ff8d818e7b7de60d88a05e4400bf7",
+        "rev": "5788c29ef0263ae282e42740a6ca8f74116841e4",
         "type": "github"
       },
       "original": {
@@ -50,20 +50,14 @@
     },
     "nixpkgs-lib": {
       "locked": {
-        "dir": "lib",
-        "lastModified": 1711703276,
-        "narHash": "sha256-iMUFArF0WCatKK6RzfUJknjem0H9m4KgorO/p3Dopkk=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "d8fe5e6c92d0d190646fb9f1056741a229980089",
-        "type": "github"
+        "lastModified": 1714640452,
+        "narHash": "sha256-QBx10+k6JWz6u7VsohfSw8g8hjdBZEf8CFzXH1/1Z94=",
+        "type": "tarball",
+        "url": "https://github.com/NixOS/nixpkgs/archive/50eb7ecf4cd0a5756d7275c8ba36790e5bd53e33.tar.gz"
       },
       "original": {
-        "dir": "lib",
-        "owner": "NixOS",
-        "ref": "nixos-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://github.com/NixOS/nixpkgs/archive/50eb7ecf4cd0a5756d7275c8ba36790e5bd53e33.tar.gz"
       }
     },
     "root": {
