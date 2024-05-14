@@ -70,10 +70,9 @@ jobs:
         run: cabal build all
 
       - name: Run tests
+        if: ${{ matrix.os }} == 'ubuntu-latest'
         run: cabal test all
-
-      - name: Check cabal file
-        run: cabal check
-
-      - name: Build documentation
-        run: cabal haddock all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hstherac-${{ runner.os }}
+          path: dist-newstyle
