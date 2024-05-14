@@ -51,14 +51,18 @@ extra-doc-files:    CHANGELOG.md
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
 -- extra-source-files:
 
-common blahflags
+common linuxflags
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -fPIE -fPIC
+common windowsflags
+    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
 -- don't forget to set those in hs_init when loading
 
 library
     -- Import common warning flags.
-    import:           blahflags
-
+    if os(linux)
+        import:           linuxflags
+    else
+        import:           windowsflags
     -- Modules exported by the library.
     exposed-modules:  HsTherac25
 
@@ -83,7 +87,10 @@ library
 
 test-suite HsTherac25-test
     -- Import common warning flags.
-    import:           blahflags
+    if os(linux)
+        import:           linuxflags
+    else
+        import:           windowsflags
 
     -- Base language which the package is written in.
     default-language: GHC2021
