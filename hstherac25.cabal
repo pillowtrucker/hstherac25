@@ -54,7 +54,7 @@ extra-doc-files:    CHANGELOG.md
 common linuxflags
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -fPIE -fPIC
 common windowsflags
-    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
+    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -shared
 -- don't forget to set those in hs_init when loading
 
 library
