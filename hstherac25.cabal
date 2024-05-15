@@ -53,8 +53,10 @@ extra-doc-files:    CHANGELOG.md
 
 common linuxflags
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -fPIE -fPIC
-common windowsflags
+common windowsflags-lib
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -shared
+common windowsflags-exe
+    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
 -- don't forget to set those in hs_init when loading
 
 library
@@ -62,7 +64,7 @@ library
     if os(linux)
         import:           linuxflags
     else
-        import:           windowsflags
+        import:           windowsflags-lib
     -- Modules exported by the library.
     exposed-modules:  HsTherac25
 
@@ -90,7 +92,7 @@ test-suite HsTherac25-test
     if os(linux)
         import:           linuxflags
     else
-        import:           windowsflags
+        import:           windowsflags-exe
 
     -- Base language which the package is written in.
     default-language: GHC2021
