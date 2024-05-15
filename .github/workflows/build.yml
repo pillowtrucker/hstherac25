@@ -84,4 +84,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: hstherac-${{ runner.os }}
-          path: dist-newstyle
+          path: ./${inputs.subdirectory}/dist-newstyle
