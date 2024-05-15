@@ -28,10 +28,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        ghc-version: ['9.8']
+        ghc-version: ['9.8.2']
         include:
           - os: windows-latest
-            ghc-version: '9.8'
+            ghc-version: '9.8.2'
     steps:
       - uses: actions/checkout@v4
         with:
