@@ -22,7 +22,7 @@ jobs:
     name: GHC ${{ matrix.ghc-version }} on ${{ matrix.os }}
     defaults:
       run:
-        working-directory: ${{ github.workspace }}/${{ inputs.subdirectory }}
+        working-directory: ./${{ inputs.subdirectory }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
