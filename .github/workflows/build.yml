@@ -1,10 +1,10 @@
 name: build
 on:
-  workflow_call:
-    inputs:
-      subdirectory:
-        required: false
-        type: string
+#  workflow_call:
+#    inputs:
+#      subdirectory:
+#        required: false
+#        type: string
   push:
     branches: [main, master]
   pull_request:
@@ -20,9 +20,9 @@ concurrency:
 jobs:
   build:
     name: GHC ${{ matrix.ghc-version }} on ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: ./${{ inputs.subdirectory }}
+#    defaults:
+#      run:
+#        working-directory: ./${{ inputs.subdirectory }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
