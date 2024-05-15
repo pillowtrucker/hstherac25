@@ -59,13 +59,12 @@ common windowsflags-exe
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
 -- don't forget to set those in hs_init when loading
 foreign-library hstherac25
-    if os(windows)
-        buildable: True
-    else:
-        buildable: False
     type: native-shared
-    import: windowsflags-lib
-    options: standalone
+    if os(windows)
+        import: windowsflags-lib
+        options: standalone
+    else:
+        import: linuxflags
     -- Directories containing source files.
     hs-source-dirs:   src-lib
     -- Base language which the package is written in.
@@ -75,6 +74,7 @@ foreign-library hstherac25
                       lens >= 5.2.3,
                       random >= 1.2.1.1,
                       stm
+    other-modules:  HsTherac25
 library
     -- Import common warning flags.
     if os(linux)
