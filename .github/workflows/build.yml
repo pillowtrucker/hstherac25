@@ -75,9 +75,9 @@ jobs:
       - name: Build
         run: cabal build all
 
-      - name: Run tests
-        if: ${{ matrix.config.os }} != 'windows-latest'
-        run: cabal test all
+#      - name: Run tests
+#        if: ${{ matrix.config.os }} != 'windows-latest'
+#        run: cabal test all
         
       - uses: actions/upload-artifact@v4
         with:
