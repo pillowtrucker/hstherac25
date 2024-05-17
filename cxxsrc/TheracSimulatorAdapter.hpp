@@ -4,7 +4,7 @@
 // #endif
 #include <HsFFI.h>
 // #include <godot_cpp/variant/string.hpp>
-#include <shared_mutex>
+// #include <shared_mutex>
 #include <string>
 
 namespace TheracSimulatorAdapter {
@@ -57,10 +57,11 @@ public:
       HsInt beam_energy                      = 0
   );
   auto requestStateInfo(StateInfoRequest state_info_request) -> std::string;
+/*
   auto check_malfunction() -> bool;
   auto set_malfunction() -> bool;
   auto reset_malfunction() -> bool;
-
+*/
 private:
   static auto
   hs_init(std::string const & args = "-threaded +RTS -N -RTS") -> HsStablePtr;
@@ -68,6 +69,6 @@ private:
 
   void * wrapped_comms;
   bool malfunctioning = false;
-  std::shared_mutex malfunctioning_mutex;
+//  std::shared_mutex malfunctioning_mutex;
 };
 } // namespace TheracSimulatorAdapter

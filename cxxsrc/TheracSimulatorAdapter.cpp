@@ -7,7 +7,7 @@
 // #include <godot_cpp/variant/packed_string_array.hpp>
 // #include <godot_cpp/variant/string.hpp>
 // #include <gsl/gsl>
-#include <mutex>
+// #include <mutex>
 
 #include <vector>
 namespace TheracSimulatorAdapter {
@@ -86,6 +86,7 @@ auto TheracSimulatorAdapter::requestStateInfo(
       ::requestStateInfo(wrapped_comms, state_info_request)
   );
 }
+/*
 auto TheracSimulatorAdapter::check_malfunction() -> bool {
   std::shared_lock<std::shared_mutex> lock{malfunctioning_mutex};
   return malfunctioning;
@@ -98,5 +99,5 @@ auto TheracSimulatorAdapter::reset_malfunction() -> bool {
   std::unique_lock<std::shared_mutex> lock{malfunctioning_mutex};
   return not(malfunctioning = false);
 }
-
+*/
 } // namespace TheracSimulatorAdapter
