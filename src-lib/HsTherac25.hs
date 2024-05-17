@@ -2,6 +2,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE CPP #-}
 module HsTherac25(externalCallWrap,startMachine,requestStateInfo,theracState,externalCalls,TheracState(..),WrappedComms(..)) where
 import Foreign.C.Types()
 import Foreign.C.String ( CString, newCString )
@@ -165,7 +166,7 @@ treat :: TMVar TheracState -> IO ()
 treat ts = do
   threadDelay 1666 
   curTPhase <- atomically $ readFieldFromStruct tPhase ts
-  isPendingReset <- atomically $ readFieldFromStruct resetPending ts
+--  isPendingReset <- atomically $ readFieldFromStruct resetPending ts
   case curTPhase of
     TP_Reset -> atomically $ resetTherac ts
     TP_Datent -> datent ts
@@ -213,8 +214,11 @@ zapTheSpecimen ts = do
 
 
 
-
+#ifdef _WIN32
+foreign export stdcall externalCallWrap :: StablePtr WrappedComms -> ExtCallTypeInt -> BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> IO ()
+#else
 foreign export ccall externalCallWrap :: StablePtr WrappedComms -> ExtCallTypeInt -> BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> IO ()
+#endif
 externalCallWrap :: StablePtr WrappedComms -> ExtCallTypeInt -> BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> IO ()
 externalCallWrap mywc ecti bti cpi be = do
   mywc' <- deRefStablePtr mywc
@@ -224,7 +228,11 @@ externalCallWrap mywc ecti bti cpi be = do
 
 -- external start machine
 -- hs_exit() will probably kill children threads ?? not sure how else to keep this alive and return from the call on c++ caller's side. need to test
+#ifdef _WIN32
+foreign export stdcall startMachine :: IO (StablePtr WrappedComms)
+#else
 foreign export ccall startMachine :: IO (StablePtr WrappedComms)
+#endif
 startMachine :: IO (StablePtr WrappedComms)
 startMachine = do
   ts <- newTMVarIO newTherac
@@ -242,7 +250,11 @@ siriMap :: M.Map Int StateInfoRequest
 siriMap = M.fromList [(1,RequestTreatmentOutcome),(2,RequestActiveSubsystem),(3,RequestTreatmentState),(4,RequestReason),(5,RequestBeamMode),(6,RequestBeamEnergy)]
 
 -- external return requested state info
+#ifdef _WIN32
+foreign export stdcall requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
+#else
 foreign export ccall requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
+#endif
 requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
 requestStateInfo mywc siri = do
   mywc' <- deRefStablePtr mywc
