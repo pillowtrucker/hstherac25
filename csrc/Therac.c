@@ -26,3 +26,10 @@ void wrap_external_call(
       beam_energy
                 );
 }
+HsPtr request_state_info(
+    HsStablePtr wrapped_comms,
+    StateInfoRequest state_info_request
+) {
+        return requestStateInfo(wrapped_comms, state_info_request);
+        
+}

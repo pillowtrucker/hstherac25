@@ -43,6 +43,10 @@ __declspec(dllexport) void wrap_external_call(
     CollimatorPosition collimator_position,
     HsInt beam_energy
 );
+__declspec(dllexport) HsPtr request_state_info(
+    HsStablePtr wrapped_comms,
+    StateInfoRequest state_info_request
+);
 #else
 HsStablePtr start_machine();
 void kill_machine();
@@ -52,6 +56,10 @@ void wrap_external_call(
     BeamType beam_type,
     CollimatorPosition collimator_position,
     HsInt beam_energy
+);
+HsPtr request_state_info(
+    HsStablePtr wrapped_comms,
+    StateInfoRequest state_info_request
 );
 #endif
 #ifdef __cplusplus
