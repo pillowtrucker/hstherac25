@@ -76,7 +76,8 @@ foreign-library hstherac25
                       random >= 1.2.1.1,
                       stm
     other-modules:  HsTherac25
-    cxx-sources: cxxsrc/TheracSimulatorAdapter.cpp
+    c-sources: csrc/Therac.c
+--    cxx-sources: cxxsrc/TheracSimulatorAdapter.cpp
 --    cxx-sources: cxxsrc/TheracSimulatorAdapter.hpp, cxxsrc/TheracSimulatorAdapter.cpp
 library
     -- Import common warning flags.
