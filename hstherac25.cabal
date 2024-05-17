@@ -75,6 +75,7 @@ foreign-library hstherac25
                       lens >= 5.2.3,
                       random >= 1.2.1.1,
                       stm
+    exposed-modules: HsTherac25
 --    other-modules:  HsTherac25
 library
     -- Import common warning flags.
