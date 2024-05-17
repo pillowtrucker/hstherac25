@@ -74,9 +74,10 @@ foreign-library hstherac25
                       containers >= 0.6.7,
                       lens >= 5.2.3,
                       random >= 1.2.1.1,
-                      stm
+                      stm,
+                      hstherac25
     other-modules:  HsTherac25
-    c-sources: csrc/Therac.h csrc/Therac.c
+    c-sources: csrc/Therac.c
 --    cxx-sources: cxxsrc/TheracSimulatorAdapter.cpp
 --    cxx-sources: cxxsrc/TheracSimulatorAdapter.hpp, cxxsrc/TheracSimulatorAdapter.cpp
 library
