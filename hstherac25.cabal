@@ -64,7 +64,7 @@ foreign-library hstherac25
     if os(windows)
         import: windowsflags-lib
         options: standalone
-    else:
+    else
        import: linuxflags
     -- Directories containing source files.
     hs-source-dirs:   src-lib
