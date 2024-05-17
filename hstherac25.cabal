@@ -55,27 +55,29 @@ extra-doc-files:    CHANGELOG.md
 common linuxflags
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -fPIE -fPIC
 common windowsflags-lib
-    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -staticlib -optl=-static -static
+    ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -shared
 common windowsflags-exe
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
 -- don't forget to set those in hs_init when loading
---foreign-library hstherac25
---    type: native-shared
---    if os(windows)
---        import: windowsflags-lib
---        options: standalone
---    else
---       import: linuxflags
---    -- Directories containing source files.
---   hs-source-dirs:   src-lib
---    -- Base language which the package is written in.
---    default-language: GHC2021
---    build-depends:    base >=4.15.0.0,
---                      containers >= 0.6.7,
---                      lens >= 5.2.3,
---                      random >= 1.2.1.1,
---                      stm
---    other-modules:  HsTherac25
+foreign-library hstherac25
+    type: native-shared
+    if os(windows)
+        import: windowsflags-lib
+        options: standalone
+    else
+       import: linuxflags
+    -- Directories containing source files.
+    hs-source-dirs:   src-lib
+    -- Base language which the package is written in.
+    default-language: GHC2021
+    build-depends:    base >=4.15.0.0,
+                      containers >= 0.6.7,
+                      lens >= 5.2.3,
+                      random >= 1.2.1.1,
+                      stm
+    other-modules:  HsTherac25
+    cxx-sources: cxxsrc/TheracSimulatorAdapter.cpp
+--    cxx-sources: cxxsrc/TheracSimulatorAdapter.hpp, cxxsrc/TheracSimulatorAdapter.cpp
 library
     -- Import common warning flags.
     if os(linux)

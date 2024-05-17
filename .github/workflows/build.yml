@@ -41,13 +41,13 @@ jobs:
           # Defaults, added for clarity:
           cabal-version: 'latest'
           cabal-update: true
-      - name: Configure the build windows
-        if: ${{ matrix.os == 'windows-latest' }}
-        run: |
-          cabal configure --enable-tests --enable-benchmarks --disable-documentation --disable-shared --enable-static
-          cabal build all --dry-run
-      - name: Configure the build linux
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+#      - name: Configure the build windows
+#        if: ${{ matrix.os == 'windows-latest' }}
+#        run: |
+#          cabal configure --enable-tests --enable-benchmarks --disable-documentation --disable-shared --enable-static
+#          cabal build all --dry-run
+      - name: Configure the build
+#        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: |
           cabal configure --enable-tests --enable-benchmarks --disable-documentation --enable-shared --disable-static
           cabal build all --dry-run
