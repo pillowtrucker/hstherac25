@@ -261,14 +261,14 @@ requestStateInfo mywc siri = do
   let ts = _wrappedCommsTheracState mywc'
 
   ts' <- atomically $ readTMVar ts
-  newCString $ case fromJust $ M.lookup siri siriMap of
-                 RequestTreatmentOutcome -> ts' ^. treatmentOutcome
-                 RequestActiveSubsystem -> if (ts' ^. dataEntryComplete) then "TREAT" else "DATA ENTRY"
-                 RequestTreatmentState -> show $ ts' ^. tPhase
-                 RequestReason -> let to = ts' ^. treatmentOutcome in if (to == "TREATMENT OK" || to == "" ) then "OPERATOR" else to
-                 RequestBeamMode -> show $ ts' ^. hardwareMeos . datentParams . _1
-                 RequestBeamEnergy -> show $ ts' ^. hardwareMeos . datentParams ._2
-
+  newCString $ case M.lookup siri siriMap of
+                 Just RequestTreatmentOutcome -> ts' ^. treatmentOutcome
+                 Just RequestActiveSubsystem -> if (ts' ^. dataEntryComplete) then "TREAT" else "DATA ENTRY"
+                 Just RequestTreatmentState -> show $ ts' ^. tPhase
+                 Just RequestReason -> let to = ts' ^. treatmentOutcome in if (to == "TREATMENT OK" || to == "" ) then "OPERATOR" else to
+                 Just RequestBeamMode -> show $ ts' ^. hardwareMeos . datentParams . _1
+                 Just RequestBeamEnergy -> show $ ts' ^. hardwareMeos . datentParams ._2
+                 Nothing -> ""
 -- BEGIN TP_SetupTest phase
 
 
