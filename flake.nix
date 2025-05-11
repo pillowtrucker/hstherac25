@@ -24,7 +24,7 @@
           # Note that local packages are automatically included in `packages`
           # (defined by `defaults.packages` option).
           #
-          basePackages = pkgs.haskell.packages.ghc98;
+          basePackages = pkgs.haskell.packages.ghc96;
           projectRoot = builtins.toString (lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
