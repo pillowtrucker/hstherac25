@@ -1,4 +1,8 @@
 #include <HsFFI.h>
+
+#ifdef __cplusplus
+#endif
+
 typedef enum ExtCallType {
   CheekyPadding,
   ExtCallSendMEOS,
@@ -27,7 +31,8 @@ typedef enum StateInfoRequest {
   RequestTreatmentState,
   RequestReason,
   RequestBeamMode,
-  RequestBeamEnergy
+  RequestBeamEnergy,
+  RequestDumpFullState
 } StateInfoRequest;
 #ifdef __cplusplus
 extern "C" { // only need to export C interface if

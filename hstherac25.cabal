@@ -56,6 +56,8 @@ common linuxflags
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -fPIE -fPIC
 common windowsflags-lib
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -shared
+common windowsflags-lib-dbg
+    ghc-options: -Wall -g -threaded -with-rtsopts=-N -shared
 common windowsflags-exe
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
 -- don't forget to set those in hs_init when loading
