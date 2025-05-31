@@ -1,3 +1,4 @@
+#pragma once
 #include <HsFFI.h>
 
 #ifdef __cplusplus
@@ -9,7 +10,8 @@ typedef enum ExtCallType {
   ExtCallToggleDatentComplete,
   ExtCallToggleEditingTakingPlace,
   ExtCallReset,
-  ExtCallProceed
+  ExtCallProceed,
+  ExtCallHardReset
 } ExtCallType;
 
 typedef enum BeamType {

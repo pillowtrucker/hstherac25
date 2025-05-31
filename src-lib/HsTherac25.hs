@@ -56,12 +56,12 @@ btMap :: M.Map BeamTypeInt BeamType
 btMap = M.fromList [(1, BeamTypeXRay), (2, BeamTypeElectron), (3, BeamTypeUndefined)]
 
 -- datent complete is actually "begin treatment"
-data ExtCallType = ExtCallSendMEOS | ExtCallToggleDatentComplete | ExtCallToggleEditingTakingPlace | ExtCallReset | ExtCallProceed
+data ExtCallType = ExtCallSendMEOS | ExtCallToggleDatentComplete | ExtCallToggleEditingTakingPlace | ExtCallReset | ExtCallProceed | ExtCallHardReset
 
 type ExtCallTypeInt = Int
 
 ectMap :: M.Map ExtCallTypeInt ExtCallType
-ectMap = M.fromList [(1, ExtCallSendMEOS), (2, ExtCallToggleDatentComplete), (3, ExtCallToggleEditingTakingPlace), (4, ExtCallReset), (5, ExtCallProceed)]
+ectMap = M.fromList [(1, ExtCallSendMEOS), (2, ExtCallToggleDatentComplete), (3, ExtCallToggleEditingTakingPlace), (4, ExtCallReset), (5, ExtCallProceed), (6, ExtCallHardReset)]
 
 data ExternalCall = ExternalCall
   { _ecType :: ExtCallType,
@@ -160,6 +160,7 @@ handleExternalCalls ts ecc = do
     ExternalCall ExtCallToggleEditingTakingPlace _ -> atomically $ toggleEditingTakingPlace ts
     ExternalCall ExtCallProceed _ -> atomically $ proceedTreatment ts
     ExternalCall ExtCallSendMEOS m -> atomically $ setTheracConsoleMEOS m ts
+    ExternalCall ExtCallHardReset _ -> atomically $ resetTherac ts
   handleExternalCalls ts ecc
 
 setFieldInStruct :: ASetter a1 a1 a2 b -> b -> TMVar a1 -> STM ()
