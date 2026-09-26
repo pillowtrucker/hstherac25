@@ -2,7 +2,7 @@
   "name": "therac-vt100-web",
   "private": true,
   "description": "Browser host page for the Therac-25 VT100 console (see ../README.md)",
-  "license": "LGPL-3.0-or-later",
+  "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@bjorn3/browser_wasi_shim": "0.4.2"
   }

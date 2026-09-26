@@ -30,7 +30,7 @@ version:            0.1.0.0
 -- description:
 
 -- The license under which the package is released.
-license:            LGPL-3.0-or-later
+license:            AGPL-3.0-or-later
 
 -- The file containing the license text.
 license-file:       LICENSE

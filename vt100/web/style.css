@@ -30,6 +30,7 @@ a { color: var(--accent); }
 .top, .foot { max-width: 1400px; margin: 0 auto; padding: 16px; }
 .top h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 0.02em; }
 .top p, .foot p { margin: 0; color: var(--muted); font-size: 14px; }
+.top p.docs-link { margin-top: 6px; font-size: 15px; }
 
 main {
   max-width: 1400px;

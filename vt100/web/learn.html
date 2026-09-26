@@ -1,0 +1,115 @@
+<main class="learn">
+<h1>How it works</h1>
+<p class="lead">The console on the previous page is three programs talking to each other, and all
+of their source is here. Each links into the exact lines where things happen. Text in
+<span class="quote">"double quotes"</span> in the code's comments is quoted from N. G. Leveson and
+C. S. Turner, <a href="https://www.cs.columbia.edu/~junfeng/08fa-e6998/sched/readings/therac25.pdf">"An
+Investigation of the Therac-25 Accidents"</a> (IEEE Computer, July 1993). Where the paper is silent
+and the code had to guess, the comment says <strong class="assume">ASSUMPTION</strong>.</p>
+
+<ul class="parts">
+  <li><strong>The Therac-25 software</strong>: a model of the AECL program on the PDP-11/23,
+  written in Haskell because its tasks share memory the way the original's did. That sharing is
+  where both accidents came from.</li>
+  <li><strong>The console program</strong>: the part of that program the operator saw: the
+  data-entry screen of the paper's Figure A, the keyboard handler and the screen processor.</li>
+  <li><strong>The VT100</strong>: the terminal on the operator's desk, rebuilt from DEC's manuals,
+  drawing its letters from the VT100's own character ROM, 9600 baud away.</li>
+</ul>
+
+<h2>Tasks that share variables</h2>
+<p>The software "has four major components: stored data, a scheduler, a set of critical and
+noncritical tasks, and interrupt services." Three of the tasks matter here. They run at the same
+time and communicate only through shared variables:</p>
+<ul>
+  <li>{{sim:treat}} is the treatment monitor. Every 0.1 s it runs one of eight phase
+  subroutines, chosen by <code>Tphase</code>: data entry ({{sim:datent}}), set-up test
+  ({{sim:setupTest}}), treatment ({{sim:zapTheSpecimen}}) and so on.</li>
+  <li>The keyboard handler ({{sim:keyboardHandler}}) turns what the operator types into those
+  shared variables, most importantly the mode/energy offset <code>MEOS</code>
+  ({{sim:editMEOS}}).</li>
+  <li>The housekeeper ({{sim:housekeeper}}) moves the turntable ({{sim:hand}}) and checks limits
+  ({{sim:lmtchk}}).</li>
+</ul>
+<p>In the simulator, each shared variable is read and written in its own small transaction, just
+as the PDP-11 tasks did. Nothing makes a sequence of those steps atomic, which is the point.</p>
+
+<h2>Tyler, 1986: Malfunction 54</h2>
+<p>When the operator enters the mode, the keyboard handler puts it in <code>MEOS</code>.
+{{sim:datent}} sees it, sets the machine up for that beam, and calls {{sim:magnet}} to set the
+bending magnets, which takes about 8 seconds. While each magnet settles, {{sim:pTime}} is
+supposed to watch for edits (the paper's Figure 3):</p>
+<pre class="figure">Ptime:
+  repeat
+    if bending magnet flag is set then
+      if editing taking place then
+        if mode/energy has changed then exit
+  until hysteresis delay has expired
+  Clear bending magnet flag
+  return</pre>
+<p>The last line is the bug. "Since Ptime clears it during its first execution, any edits
+performed during each succeeding pass through Ptime will not be recognized." Look for it at the
+end of {{sim:pTime}}. An edit made after the first magnet but before the last goes into
+<code>MEOS</code> and onto the screen, and nobody reads it. If the cursor has already been to the
+command line once ({{sim:cursorToCommandLine}}: "the data-entry completion variable only
+indicates that the cursor has been down to the command line, not that it is still there"),
+Datent moves on to set-up with the old beam.</p>
+<p>Meanwhile the housekeeper has turned the turntable for the new mode. {{sim:beamPhysics}}
+decides what the hardware does with X-ray current and no target in the beam, and
+{{sim:zapTheSpecimen}} records the dose. The ion chamber saturates, so the console shows
+"Malfunction 54" with 6 monitor units ({{src:vt100/src/console.c#poll_machine}}).</p>
+<p>At the keyboard, that is {{src:vt100/src/console.c#accept}} (RETURN, including the quick
+series that "would thus complete data entry"), {{src:vt100/src/console.c#cursor_up}} (the cursor
+up key) and {{src:vt100/src/console.c#send_meos}}. The test that types it:
+{{src:vt100/test/tests.c#tyler_with_returns}}.</p>
+
+<h2>Yakima, 1987: Class3</h2>
+<p>{{sim:setupTest}} runs ten times a second while the machine is set up, and each pass adds one
+to <code>Class3</code>, a single byte. On every 256th pass it rolls over to zero.
+{{sim:lmtchk}} only calls {{sim:chkcol}}, the check that the turntable (the "upper collimator")
+is where the treatment needs it, when <code>Class3</code> is not zero (the paper's Figure 4):</p>
+<pre class="figure">Lmtchk:
+  If Class3=0 then do not enter Chkcol
+  If Class3 is not 0 then enter Chkcol
+Chkcol:
+  If upper collimator position inconsistent with treatment
+  then set bit 9 of F$mal</pre>
+<p>The operator had turned the turntable to the field-light position ({{sim:fieldLight}}). When
+the set button was pressed "at the precise moment that Class3 rolled over to zero", the check
+was skipped, set-up test saw no malfunction, and the beam fired with nothing to spread or measure
+it. The console showed no dose, then "flatness". The test: {{src:vt100/test/tests.c#yakima}}.</p>
+<p>AECL's fix: "the Class3 variable is set to some fixed nonzero value each time through Set-Up
+Test instead of being incremented."</p>
+
+<h2>Why nobody at the console could tell</h2>
+<ul>
+  <li>The software never compares what it set the beam up for with where the turntable is:
+  "The software appears to include no checks to detect such an incompatibility"
+  ({{sim:beamPhysics}}).</li>
+  <li>Malfunctions were routine, and one key started the machine again. See the made-up ones in
+  {{sim:spuriousMessage}}, and P, which works up to five times ({{sim:zapTheSpecimen}}).</li>
+  <li>The dose monitor shows what the saturated ion chamber measured, not what the patient got.
+  The console has no way to see the real dose; the page's "What the operator couldn't see" panel
+  cheats.</li>
+</ul>
+
+<h2>The console and the terminal</h2>
+<p>The console program never draws anything itself. It sends characters and VT100 control
+sequences down a 9600-baud line ({{src:vt100/src/serial.c#serial_get}}). Its screen processor
+({{src:vt100/src/console.c#refresh}}) rewrites only what changed, and a full screen still takes
+about a second. The terminal parses that stream ({{src:vt100/src/vt100.c#vt_receive}}) and draws
+each character from the ROM, dot by dot, through the dot stretcher
+({{src:vt100/src/vt100.c#vt_render}}, {{src:vt100/src/vt100.c#glyph_dots}}). Keys go the other
+way ({{src:vt100/src/vt100.c#vt_key}}), repeating as a VT100's did.</p>
+
+<h2>Where the model guesses</h2>
+<p>The paper is the most detailed public account, and it "leaves some unanswered questions".
+These are the places where the code fills a gap:</p>
+{{assumptions}}
+
+<h2>All the source</h2>
+<p>Free software under the <a href="LICENSE.txt">GNU Affero General Public License</a>, version 3
+or later. Download all of it as <a href="source.tar.gz">source.tar.gz</a>; it builds with
+<code>vt100/build-web.sh</code> and GHC's WebAssembly toolchain.</p>
+{{files}}
+</main>

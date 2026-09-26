@@ -4,6 +4,7 @@
 # FLAVOUR=9.12; `source ~/.ghc-wasm/env`) and npm.
 # Serve vt100/dist/ with any static web server, e.g. `python3 -m http.server -d vt100/dist`.
 # SOURCE_URL: repository URL for the page's footer link; unset, the page names no repository.
+# The page always carries its own source (source.tar.gz) and LICENSE.txt: it is AGPL-3.0.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(dirname "$here")
@@ -27,8 +28,23 @@ else
 fi
 
 (cd "$here/web" && npm ci --no-audit --no-fund --silent)
-cp -r "$here/web/node_modules/@bjorn3/browser_wasi_shim/dist" "$dist/vendor/browser_wasi_shim"
-cp "$here/web/style.css" "$here/web/main.js" "$here/web/therac.mjs" "$dist/"
+shim=$here/web/node_modules/@bjorn3/browser_wasi_shim
+cp -r "$shim/dist" "$dist/vendor/browser_wasi_shim"
+cp "$shim/LICENSE-MIT" "$shim/LICENSE-APACHE" "$dist/vendor/browser_wasi_shim/"
+cp "$root/LICENSE" "$dist/LICENSE.txt"
+# the source this page was built from, as the AGPL requires
+epoch=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || date +%s)}
+sources=
+for f in "$root"/*.cabal "$root"/cabal.project "$root"/LICENSE "$root"/README.md "$root"/CHANGELOG.md \
+  "$root"/src-lib "$root"/csrc "$root"/test "$root"/vt100; do
+  if [ -e "$f" ]; then sources="$sources ${f#"$root"/}"; fi
+done
+(cd "$root" && tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner \
+  --exclude=vt100/dist --exclude=vt100/package --exclude=node_modules \
+  --transform 's,^\(\./\)\?,therac25-source/,' -czf "$dist/source.tar.gz" $sources)
+cp "$here/web/style.css" "$here/web/main.js" "$here/web/therac.mjs" "$here/web/docs.css" "$dist/"
+# "How it works": the walkthrough and the annotated source
+python3 "$here/tools/mksource.py" "$root" "$dist"
 url=$(printf '%s' "${SOURCE_URL:-}" | sed 's/[&|"<>]//g')
 sed "s|<meta name=\"therac-source\" content=\"\">|<meta name=\"therac-source\" content=\"$url\">|" \
   "$here/web/index.html" > "$dist/index.html"
