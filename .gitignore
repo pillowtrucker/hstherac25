@@ -6,3 +6,4 @@ dist-newstyle/
 *~
 .direnv
 result
+test/Main

@@ -1,8 +1,9 @@
 #include "Therac.h"
 #include <HsTherac25_stub.h>
+#include <stdlib.h>
 HsStablePtr start_machine() {
 
-  char * argv[] = {"-threaded", "+RTS", "-N", "-RTS", '\0'};
+  char * argv[] = {"hstherac25", "+RTS", "-N", "-RTS", NULL};
   int argc      = 4;
   char ** pargv = argv;
   hs_init(&argc, &pargv);
@@ -31,3 +32,5 @@ HsPtr request_state_info(
 ) {
   return requestStateInfo(wrapped_comms, state_info_request);
 }
+/* newCString allocates with malloc; free it with the same C runtime that allocated it */
+void free_state_info(HsPtr state_info) { free(state_info); }
