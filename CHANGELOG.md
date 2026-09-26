@@ -16,6 +16,11 @@
 * Invalid values from the UI are ignored instead of crashing the host; request 7 works;
   free_state_info; new requests 8-12.
 * Scenario test suite, run in CI on Linux.
+* VT100 operator console (`vt100/`): the treatment console program with the paper's screen
+  layout, a 9600-baud line, and a VT100 emulated from DEC's manuals with its own character
+  ROM. It runs in the browser (WebAssembly, deployed to GitHub Pages), on a terminal, or on a
+  real VT100, and has its own test suite (`vt100-test`).
+* New calls: 9 beam on (B), 10 opt in to B, 11 prescribed monitor units.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

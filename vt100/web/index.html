@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Therac-25 Console</title>
+<meta name="description" content="The Therac-25 treatment console on a DEC VT100, running the hstherac25 simulator in the browser. Both software races from Leveson and Turner's 1993 investigation can be reproduced.">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Therac-25 treatment console</h1>
+  <p>A DEC VT100 on a 9600-baud line to the PDP-11/23, running the <a href="https://github.com/pillowtrucker/hstherac25">hstherac25</a> simulator of the software described by Leveson and Turner, <a href="https://www.cs.columbia.edu/~junfeng/08fa-e6998/sched/readings/therac25.pdf">"An Investigation of the Therac-25 Accidents"</a> (IEEE Computer, 1993).</p>
+</header>
+
+<main>
+  <section class="terminal" aria-label="VT100 terminal">
+    <div class="monitor">
+      <div class="bezel">
+        <div class="glass">
+          <canvas id="screen" tabindex="0" aria-label="VT100 screen. Click or tap here, then type."></canvas>
+          <p id="status" class="status">Loading…</p>
+        </div>
+      </div>
+      <div class="badge" aria-hidden="true">VT100</div>
+    </div>
+    <div id="keyboard" class="keyboard" aria-label="VT100 keyboard"></div>
+    <pre id="screen-text" class="sr-only" aria-live="polite"></pre>
+  </section>
+
+  <aside class="side">
+    <section class="panel" aria-labelledby="room-title">
+      <h2 id="room-title">Treatment room</h2>
+      <p class="note">The hand control, on the machine next to the patient.</p>
+      <div class="hand">
+        <button id="field-light" type="button">FIELD LIGHT</button>
+        <button id="set-button" type="button">SET</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="machine-title">
+      <h2 id="machine-title">Machine</h2>
+      <div class="row">
+        <button id="power" type="button">Power cycle</button>
+        <label><input id="sound" type="checkbox" checked> Keyclick and bell</label>
+        <label><input id="underline" type="checkbox"> Underline cursor</label>
+      </div>
+    </section>
+
+    <details class="panel" id="hidden-panel">
+      <summary>What the operator couldn't see</summary>
+      <dl class="readout">
+        <dt>Treat phase (Tphase)</dt><dd id="i-phase">–</dd>
+        <dt>Class3</dt><dd><span id="i-class3">–</span><span class="bar" aria-hidden="true"><span id="i-class3-bar"></span></span></dd>
+        <dt>Turntable</dt><dd id="i-turntable">–</dd>
+        <dt>Beam set up for</dt><dd id="i-beam">–</dd>
+        <dt>Dose monitor showed</dt><dd id="i-shown">–</dd>
+        <dt>Patient actually received</dt><dd id="i-dose">–</dd>
+      </dl>
+      <p class="note">Class3 counts up ten times a second while the machine is in set-up test. Pressed as it rolls over from 255 to 0, SET skips the collimator check (Yakima).</p>
+    </details>
+
+    <details class="panel" open>
+      <summary>Reproducing the accidents</summary>
+      <h3>Tyler, 1986: Malfunction 54</h3>
+      <ol>
+        <li>Type a patient name, <kbd>RETURN</kbd>, and <kbd>RETURN</kbd> again for the treatment mode.</li>
+        <li>BEAM TYPE: <kbd>X</kbd> <kbd>RETURN</kbd>. The energy fills in 25 and the machine starts setting its bending magnets, which takes about 8 seconds.</li>
+        <li><kbd>RETURN</kbd> for the energy, then <kbd>200</kbd>, <kbd>202</kbd> and <kbd>1</kbd>, each followed by <kbd>RETURN</kbd>. Then press <kbd>RETURN</kbd> six times to copy the room settings. The cursor is now on COMMAND.</li>
+        <li>After 2 seconds but before 8 have passed since you typed X, press <kbd>↑</kbd> until you are back on BEAM TYPE (11 times). Type <kbd>E</kbd> <kbd>RETURN</kbd>, then <kbd>RETURN</kbd> back down to COMMAND.</li>
+        <li>When SYSTEM says BEAM READY, type <kbd>B</kbd> <kbd>RETURN</kbd>.</li>
+      </ol>
+      <p>The screen says ELECTRON; the machine fired X-ray current with the turntable in the electron position. The screen shows MALFUNCTION 54, TREAT PAUSE and 6 monitor units. <kbd>P</kbd> <kbd>RETURN</kbd> does it again.</p>
+      <h3>Yakima, 1987: Class3 overflow</h3>
+      <ol>
+        <li>Enter an X-ray prescription down to COMMAND, as above, without the edit.</li>
+        <li>Press FIELD LIGHT on the hand control. SYSTEM says PRESS SET BUTTON.</li>
+        <li>Open "What the operator couldn't see" and press SET (or type <kbd>SET</kbd> <kbd>RETURN</kbd>) when Class3 is between about 240 and 254.</li>
+        <li>If BEAM READY appears, type <kbd>B</kbd> <kbd>RETURN</kbd>. You get FLATNESS and no dose on the monitor.</li>
+      </ol>
+      <p class="note">Keys: <kbd>Enter</kbd> is RETURN, <kbd>Backspace</kbd> is BACK SPACE, <kbd>Insert</kbd> is LINE FEED, <kbd>F1</kbd>–<kbd>F4</kbd> are PF1–PF4, <kbd>Scroll Lock</kbd> is NO SCROLL. <kbd>R</kbd> <kbd>RETURN</kbd> resets.</p>
+    </details>
+  </aside>
+</main>
+
+<footer class="foot">
+  <p>Screen layout from the paper's Figure A. Terminal behaviour from DEC's VT100 User Guide and Technical Manual, with the characters from the VT100's own character-generator ROM. The simulator in your browser is the same Haskell code other front ends link to, compiled to WebAssembly. <a href="https://github.com/pillowtrucker/hstherac25/blob/main/vt100/README.md">What is sourced and what is assumed</a>.</p>
+</footer>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

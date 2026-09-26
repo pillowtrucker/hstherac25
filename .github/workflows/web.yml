@@ -1,0 +1,64 @@
+name: web
+# Builds the VT100 console for the browser (vt100/build-web.sh), reproduces the Tyler accident in
+# the WebAssembly build, and publishes it to GitHub Pages on pushes to main.
+# Pages must be enabled once: Settings -> Pages -> Source: GitHub Actions.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GHC's WebAssembly toolchain
+        run: |
+          curl -sSf https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/raw/master/bootstrap.sh | FLAVOUR=9.12 sh
+          ~/.ghc-wasm/add_to_github_path.sh
+
+      - name: Restore cached dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ghc-wasm/.cabal/packages
+            ~/.ghc-wasm/.cabal/store
+          key: wasm-9.12-${{ hashFiles('hstherac25.cabal') }}
+          restore-keys: wasm-9.12-
+
+      - name: Build
+        run: |
+          wasm32-wasi-cabal update
+          vt100/build-web.sh
+
+      - name: Reproduce the Tyler accident in the browser build
+        run: node vt100/test/smoke.mjs vt100/dist
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: vt100/dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

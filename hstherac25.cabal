@@ -50,7 +50,9 @@ build-type:         Simple
 extra-doc-files:    CHANGELOG.md
 
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
--- extra-source-files:
+extra-source-files: csrc/Therac.h,
+                    vt100/src/*.h,
+                    vt100/src/vt100_font.inc
 
 common linuxflags
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N -fPIE -fPIC
@@ -60,9 +62,14 @@ common windowsflags-lib-dbg
     ghc-options: -Wall -g -threaded -with-rtsopts=-N -shared
 common windowsflags-exe
     ghc-options: -Wall -O2 -threaded -with-rtsopts=-N
+-- GHC's WebAssembly backend only has the single-threaded runtime
+common wasmflags
+    ghc-options: -Wall -O2
 -- don't forget to set those in hs_init when loading
 foreign-library hstherac25
     type: native-shared
+    if arch(wasm32)
+        buildable: False
     if os(windows)
         import: windowsflags-lib
         options: standalone
@@ -85,7 +92,9 @@ foreign-library hstherac25
 --    cxx-sources: cxxsrc/TheracSimulatorAdapter.hpp, cxxsrc/TheracSimulatorAdapter.cpp
 library
     -- Import common warning flags.
-    if os(linux)
+    if arch(wasm32)
+        import:           wasmflags
+    elif os(linux)
         import:           linuxflags
     else
         import:           windowsflags-lib
@@ -113,6 +122,8 @@ library
 
 test-suite HsTherac25-test
     -- Import common warning flags.
+    if arch(wasm32)
+        buildable:        False
     if os(linux)
         import:           linuxflags
     else
@@ -144,3 +155,55 @@ test-suite HsTherac25-test
                   lens >= 5.2.3,
                   random >= 1.2.1.1,
                   stm
+
+-- The VT100 operator console (see vt100/README.md). Like the foreign library, each component
+-- compiles the simulator module itself, so the C side can include its generated stub header.
+common vt100-console
+    default-language: GHC2021
+    ghc-options:      -Wall -O2
+    hs-source-dirs:   src-lib, vt100/hs
+    other-modules:    HsTherac25
+    build-depends:    base >=4.15.0.0,
+                      containers >= 0.6.7,
+                      lens >= 5.2.3,
+                      random >= 1.2.1.1,
+                      stm
+    include-dirs:     csrc, vt100/src
+    cc-options:       -std=c99 -Wall
+    c-sources:        csrc/Therac.c,
+                      vt100/src/console.c,
+                      vt100/src/serial.c
+
+-- the console on a real terminal: an xterm, or a VT100 on a serial port
+executable therac-vt100
+    import:           vt100-console
+    if arch(wasm32) || os(windows)
+        buildable:    False
+    main-is:          NativeMain.hs
+    c-sources:        vt100/src/native_tty.c
+    ghc-options:      -threaded -with-rtsopts=-N
+
+-- the browser version: build with vt100/build-web.sh
+executable therac-vt100-web
+    import:           vt100-console
+    if arch(wasm32)
+        build-depends: ghc-experimental
+    else
+        buildable:    False
+    main-is:          WebMain.hs
+    c-sources:        vt100/src/vt100.c,
+                      vt100/src/session.c,
+                      vt100/src/web_main.c
+    ghc-options:      -no-hs-main -optl-mexec-model=reactor
+                      "-optl-Wl,--export=therac_boot,--export=web_init,--export=web_frame,--export=web_raster,--export=web_key,--export=web_hand,--export=web_power,--export=web_text,--export=web_info,--export=web_leds,--export=web_take_clicks,--export=web_take_bells,--export=web_cursor_style"
+
+test-suite vt100-test
+    import:           vt100-console
+    type:             exitcode-stdio-1.0
+    if arch(wasm32) || os(windows)
+        buildable:    False
+    main-is:          TestMain.hs
+    c-sources:        vt100/src/vt100.c,
+                      vt100/src/session.c,
+                      vt100/test/tests.c
+    ghc-options:      -threaded -with-rtsopts=-N

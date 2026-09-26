@@ -39,8 +39,10 @@ electron = (2, 2, 20000)
 sendMEOS :: Machine -> (Int, Int, Int) -> IO ()
 sendMEOS m (b, c, e) = call m 1 b c e
 
-begin, proceed, reset, setButton, fieldLight :: Machine -> IO ()
+begin, proceed, reset, setButton, fieldLight, beamOnKey, beamOn :: Machine -> IO ()
 begin m = call m 2 0 0 0
+beamOnKey m = call m 10 0 0 0
+beamOn m = call m 9 0 0 0
 proceed m = call m 5 0 0 0
 reset m = call m 4 0 0 0
 setButton m = call m 7 0 0 0
@@ -222,6 +224,36 @@ yakimaSetAtOtherTimesIsSafe = do
     `andThen` (patientDose m >>= \p -> ensure (p <= 200) ("no overdose expected" ++ d))
     `andThen` (turntable m >>= \t -> ensure (t == "CollimatorPositionXRay") ("turntable should be back in the X-ray position" ++ d))
 
+-- A UI with a "B" command: BEAM READY waits for it, and a normal treatment delivers what was
+-- prescribed ("the operator had requested 202 monitor units")
+beamOnKeyWaitsAndPrescriptionIsHonoured :: Check
+beamOnKeyWaitsAndPrescriptionIsHonoured = do
+  m <- newMachine
+  beamOnKey m
+  call m 11 0 0 202
+  sendMEOS m xRay
+  begin m
+  r <-
+    waitUntil 15000 "BEAM READY" ((== "TP_SetupDone") <$> tphase m)
+      `andThen` (ms 1500 >> tphase m >>= \p -> ensure (p == "TP_SetupDone") ("must wait for B, got " ++ p))
+      `andThen` (patientDose m >>= \d -> ensure (d == 0) "no beam before B")
+      `andThen` (beamOn m >> finishTreatment m)
+  d <- describe m
+  pure r
+    `andThen` (outcome m >>= \o -> ensure (o == "TREATMENT OK") ("expected TREATMENT OK" ++ d))
+    `andThen` (displayed m >>= \x -> ensure (x == 202) ("dose monitor should show the prescribed 202 MU, got " ++ show x))
+    `andThen` (patientDose m >>= \x -> ensure (x == 202) ("expected 202 delivered" ++ d))
+
+resetWhileBeamReady :: Check
+resetWhileBeamReady = do
+  m <- newMachine
+  beamOnKey m
+  sendMEOS m xRay
+  begin m
+  waitUntil 15000 "BEAM READY" ((== "TP_SetupDone") <$> tphase m)
+    `andThen` (reset m >> waitUntil 2000 "reset" ((== "TP_Datent") <$> tphase m))
+    `andThen` (beamOn m >> ms 500 >> patientDose m >>= \x -> ensure (x == 0) "B after a reset must not fire")
+
 -- used to kill the keyboard handler, or poison the state and crash the host on the next request
 badInputFromUIIsIgnored :: Check
 badInputFromUIIsIgnored = do
@@ -249,7 +281,9 @@ scenarios =
     ("Begin shortly after entering the prescription treats normally", beginShortlyAfterEntryTreats),
     ("Yakima: set just before Class3 rolls over gives an overdose, P repeats it", yakimaSetAtRolloverOverdoses),
     ("Yakima: set at any other time is safe", yakimaSetAtOtherTimesIsSafe),
-    ("bad input from the UI is ignored", badInputFromUIIsIgnored)
+    ("bad input from the UI is ignored", badInputFromUIIsIgnored),
+    ("with a B command, BEAM READY waits for B and the prescribed MU are delivered", beamOnKeyWaitsAndPrescriptionIsHonoured),
+    ("reset works while the console says BEAM READY", resetWhileBeamReady)
   ]
 
 main :: IO ()

@@ -1,0 +1,242 @@
+:root {
+  --room: #16181a;
+  --ink: #d9dcd6;
+  --muted: #9aa09a;
+  --panel: #202326;
+  --line: #34383b;
+  --accent: #e0a458;
+  --case: #d8d0bd;
+  --case-shadow: #b3aa94;
+  --bezel: #2b2825;
+  --key: #2e2b28;
+  --key-top: #3b3834;
+  --key-ink: #efe9dc;
+  --led-off: #4a1d10;
+  --led-on: #ff5a1f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--room);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+a { color: var(--accent); }
+
+.top, .foot { max-width: 1400px; margin: 0 auto; padding: 16px; }
+.top h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 0.02em; }
+.top p, .foot p { margin: 0; color: var(--muted); font-size: 14px; }
+
+main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 16px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---- the VT100 ---- */
+
+.terminal { min-width: 0; }
+
+.monitor {
+  position: relative;
+  background: linear-gradient(180deg, var(--case) 0%, #cfc6b1 100%);
+  border-radius: 18px 18px 10px 10px;
+  padding: 3.2% 4% 4.5%;
+  box-shadow: inset 0 -6px 0 var(--case-shadow), 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+.bezel {
+  background: var(--bezel);
+  border-radius: 14px;
+  padding: 3%;
+  box-shadow: inset 0 0 0 2px #1d1b19, inset 0 6px 14px rgba(0, 0, 0, 0.6);
+}
+
+/* a 12-inch 4:3 tube; the 202 x 115 mm raster sits in the middle of it */
+.glass {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border-radius: 7% / 9%;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 45%, #0d1011 0%, #070808 70%, #040505 100%);
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.9);
+}
+
+#screen {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  touch-action: manipulation;
+}
+
+.glass:focus-within { box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.9), 0 0 0 2px rgba(224, 164, 88, 0.35); }
+
+.status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6%;
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.status:empty { display: none; }
+
+.badge {
+  position: absolute;
+  right: 5%;
+  bottom: 1.2%;
+  font: 700 12px/1 Helvetica, Arial, sans-serif;
+  letter-spacing: 0.12em;
+  color: #6d665a;
+}
+
+/* ---- keyboard, laid out from DEC's drawing (972 x 300 units) ---- */
+
+.keyboard {
+  position: relative;
+  margin-top: 18px;
+  aspect-ratio: 972 / 300;
+  background: linear-gradient(180deg, #d2c9b4, #c3b9a2);
+  border-radius: 10px 10px 16px 16px;
+  box-shadow: inset 0 -5px 0 var(--case-shadow), 0 8px 20px rgba(0, 0, 0, 0.45);
+  user-select: none;
+  -webkit-user-select: none;
+  container-type: inline-size;
+}
+
+.key {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1em;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 6%;
+  background: linear-gradient(180deg, var(--key-top), var(--key));
+  box-shadow: 0 0.35cqw 0 #141312, inset 0 0.15cqw 0 rgba(255, 255, 255, 0.08);
+  color: var(--key-ink);
+  font: 600 1.35cqw/1 Helvetica, Arial, sans-serif;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.key.letter { font-size: 1.9cqw; }
+.key.word { font-size: 0.95cqw; letter-spacing: 0.02em; }
+.key .small { font-size: 0.9cqw; font-weight: 400; opacity: 0.85; }
+.key.down { transform: translateY(0.3cqw); box-shadow: 0 0.05cqw 0 #141312; background: var(--key); }
+.key.return { clip-path: polygon(33.34% 0, 100% 0, 100% 100%, 0 100%, 0 52.38%, 33.34% 52.38%); justify-content: flex-end; padding-bottom: 1.3cqw; }
+.key:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.leds {
+  position: absolute;
+  background: #bdb39c;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.led {
+  position: absolute;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25cqw;
+  font: 700 0.8cqw/1 Helvetica, Arial, sans-serif;
+  color: #3a352c;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.led i {
+  display: block;
+  width: 1.1cqw;
+  height: 1.1cqw;
+  border-radius: 50%;
+  background: var(--led-off);
+  box-shadow: inset 0 0 2px #000;
+}
+
+.led.on i { background: var(--led-on); box-shadow: 0 0 1cqw var(--led-on); }
+
+/* ---- side panels ---- */
+
+.side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.panel h2, .panel summary { font-size: 14px; font-weight: 700; margin: 0; letter-spacing: 0.04em; text-transform: uppercase; }
+.panel summary { cursor: pointer; }
+.panel h3 { font-size: 14px; margin: 14px 0 4px; }
+.panel ol { padding-left: 20px; margin: 4px 0; }
+.panel li { margin: 3px 0; }
+.panel p { margin: 6px 0; }
+.note { color: var(--muted); font-size: 13px; }
+
+.hand { display: flex; gap: 10px; margin-top: 8px; }
+
+.hand button, #power {
+  font: 700 13px/1 Helvetica, Arial, sans-serif;
+  letter-spacing: 0.08em;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid #111;
+  background: linear-gradient(180deg, #55504a, #3b3732);
+  color: #f3eee3;
+  cursor: pointer;
+}
+
+.hand button:active, #power:active { transform: translateY(1px); }
+#set-button { background: linear-gradient(180deg, #2f6b3c, #1f4a29); }
+.hand button:focus-visible, #power:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 8px; }
+.row label { font-size: 14px; }
+
+.readout { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 6px; font-size: 14px; }
+.readout dt { color: var(--muted); }
+.readout dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; display: flex; align-items: center; gap: 8px; }
+.bar { flex: 1; height: 6px; background: #111; border-radius: 3px; overflow: hidden; }
+.bar span { display: block; height: 100%; width: 0; background: var(--accent); }
+
+kbd {
+  font: 600 12px/1 ui-monospace, Menlo, Consolas, monospace;
+  border: 1px solid #555;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 1px 4px;
+  background: #2a2d30;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: pre;
+}

@@ -30,14 +30,13 @@ import Control.Concurrent.STM
     readTChan,
     readTMVar,
     retry,
-    swapTMVar,
     takeTMVar,
     writeTChan,
   )
 import Control.Exception (SomeException, catch)
 import Control.Lens (ASetter, Getting, makeFields, (%~), (&), (.~), (^.))
 import Control.Lens.Tuple (Field1 (_1), Field2 (_2))
-import Control.Monad (forever, unless, void, when)
+import Control.Monad (forever, unless, when)
 import Data.Bits (clearBit, setBit)
 import Data.Map.Strict qualified as M
 import Data.Word (Word16, Word8)
@@ -74,16 +73,17 @@ btMap = M.fromList [(1, BeamTypeXRay), (2, BeamTypeElectron), (3, BeamTypeUndefi
 
 -- ExtCallToggleDatentComplete and ExtCallToggleEditingTakingPlace keep their old names and numbers
 -- for the UIs, but they SET their flag now (see `keyboardHandler`)
-data ExtCallType = ExtCallSendMEOS | ExtCallToggleDatentComplete | ExtCallToggleEditingTakingPlace | ExtCallReset | ExtCallProceed | ExtCallHardReset | ExtCallSet | ExtCallFieldLight
+data ExtCallType = ExtCallSendMEOS | ExtCallToggleDatentComplete | ExtCallToggleEditingTakingPlace | ExtCallReset | ExtCallProceed | ExtCallHardReset | ExtCallSet | ExtCallFieldLight | ExtCallBeamOn | ExtCallUseBeamOnKey | ExtCallPrescribeDose
 
 type ExtCallTypeInt = Int
 
 ectMap :: M.Map ExtCallTypeInt ExtCallType
-ectMap = M.fromList [(1, ExtCallSendMEOS), (2, ExtCallToggleDatentComplete), (3, ExtCallToggleEditingTakingPlace), (4, ExtCallReset), (5, ExtCallProceed), (6, ExtCallHardReset), (7, ExtCallSet), (8, ExtCallFieldLight)]
+ectMap = M.fromList [(1, ExtCallSendMEOS), (2, ExtCallToggleDatentComplete), (3, ExtCallToggleEditingTakingPlace), (4, ExtCallReset), (5, ExtCallProceed), (6, ExtCallHardReset), (7, ExtCallSet), (8, ExtCallFieldLight), (9, ExtCallBeamOn), (10, ExtCallUseBeamOnKey), (11, ExtCallPrescribeDose)]
 
 data ExternalCall = ExternalCall
   { _ecType :: ExtCallType,
-    _ecMEOS :: MEOS
+    _ecMEOS :: MEOS,
+    _ecValue :: Int -- ExtCallPrescribeDose: monitor units
   }
 
 type BeamEnergy = Int
@@ -125,11 +125,18 @@ data TheracState = TheracState
     _theracStateTurntableTarget :: CollimatorPosition, -- where the turntable motor is driving to
     _theracStateTurntableEta :: Int, -- housekeeper passes until it gets there
     _theracStateDisplayedDose :: Int, -- monitor units the dose monitor SHOWED for the last attempt
-    _theracStatePatientDose :: Int -- rads the patient ACTUALLY received since the last reset. The real console had no way to show this
+    _theracStatePatientDose :: Int, -- rads the patient ACTUALLY received since the last reset. The real console had no way to show this
+    _theracStatePrescribedMu :: Int, -- monitor units the console prescribed; a normal treatment delivers and shows this
+    _theracStateBeamOnKey :: Bool -- the UI has a "B" command (ExtCallUseBeamOnKey): Set-Up Done waits for it instead of firing by itself
   }
   deriving (Eq, Show)
 
 $(makeFields ''TheracState)
+
+-- "Typical single therapeutic doses are in the 200-rad range". Used until the UI sends
+-- ExtCallPrescribeDose.
+prescribedDose :: Int
+prescribedDose = 200
 
 newTherac :: TheracState
 newTherac =
@@ -150,7 +157,9 @@ newTherac =
       _theracStateTurntableTarget = CollimatorPositionFieldLight,
       _theracStateTurntableEta = 0,
       _theracStateDisplayedDose = 0,
-      _theracStatePatientDose = 0
+      _theracStatePatientDose = 0,
+      _theracStatePrescribedMu = prescribedDose,
+      _theracStateBeamOnKey = False
     }
 
 data WrappedComms = WrappedComms
@@ -191,10 +200,6 @@ turntableTravelPasses = 2000000 `div` housekeeperTick
 maxPauses :: Int
 maxPauses = 5
 
--- "Typical single therapeutic doses are in the 200-rad range"
-prescribedDose :: Int
-prescribedDose = 200
-
 -- Not in the paper; "Malfunction messages were commonplace". High enough that P becomes a
 -- habit, low enough that normal treatments finish.
 spuriousPausePercent :: Int
@@ -215,13 +220,14 @@ readFieldFromStruct :: Getting b s b -> TMVar s -> STM b
 readFieldFromStruct ff ts = readTMVar ts >>= \l -> return $ l ^. ff
 
 -- soft reset (R): a new treatment. Class3 is never re-initialised, and the turntable
--- physically stays where it is.
+-- physically stays where it is. Whether the UI has a "B" command is not the treatment's business.
 resetTherac :: TMVar TheracState -> STM ()
 resetTherac ts = modifyTherac ts $ \s ->
   newTherac
     & class3 .~ (s ^. class3)
     & hardwareMeos . handParams .~ (s ^. hardwareMeos . handParams)
     & turntableTarget .~ (s ^. hardwareMeos . handParams)
+    & beamOnKey .~ (s ^. beamOnKey)
 
 -- the turntable position the console is asking for; the UIs usually send it, otherwise it follows the mode
 requestedTurntable :: MEOS -> CollimatorPosition
@@ -235,15 +241,18 @@ requestedTurntable m = case m ^. handParams of
 -- BEGIN virtual task keyboardhandler
 
 keyboardHandler :: TMVar TheracState -> ExternalCall -> STM ()
-keyboardHandler ts (ExternalCall ect m) = case ect of
+keyboardHandler ts (ExternalCall ect m v) = case ect of
   ExtCallSendMEOS -> editMEOS m ts
   ExtCallToggleDatentComplete -> cursorToCommandLine ts
   ExtCallToggleEditingTakingPlace -> setFieldInStruct editingTakingPlace True ts
   ExtCallReset -> setFieldInStruct resetPending True ts
   ExtCallProceed -> proceedTreatment ts
-  ExtCallHardReset -> void $ swapTMVar ts newTherac
+  ExtCallHardReset -> modifyTherac ts $ \s -> newTherac & beamOnKey .~ (s ^. beamOnKey)
   ExtCallSet -> setFieldInStruct awaitingSet False ts
   ExtCallFieldLight -> fieldLight ts
+  ExtCallBeamOn -> beamOn ts
+  ExtCallUseBeamOnKey -> setFieldInStruct beamOnKey True ts
+  ExtCallPrescribeDose -> when (v > 0) $ setFieldInStruct prescribedMu v ts
 
 -- An edit of the prescription. While Datent is running it just lands in MEOS - that's the Tyler
 -- race. Once Datent has exited, the edit sends the machine back through Datent. The paper doesn't
@@ -264,6 +273,12 @@ editMEOS m ts = modifyTherac ts $ \s ->
 cursorToCommandLine :: TMVar TheracState -> STM ()
 cursorToCommandLine = setFieldInStruct dataEntryComplete True
 
+-- "She hit the one-key command 'B' (for 'beam on') to begin the treatment." Only means
+-- anything once the console says BEAM READY.
+beamOn :: TMVar TheracState -> STM ()
+beamOn ts = modifyTherac ts $ \s ->
+  if s ^. tPhase == TP_SetupDone then s & tPhase .~ TP_PatientTreatment else s
+
 proceedTreatment :: TMVar TheracState -> STM ()
 proceedTreatment ts = do
   tp <- readFieldFromStruct tPhase ts
@@ -279,6 +294,7 @@ fieldLight :: TMVar TheracState -> STM ()
 fieldLight ts = modifyTherac ts $ \s -> case s ^. tPhase of
   TP_Datent -> s & awaitingSet .~ True
   TP_SetupTest -> s & awaitingSet .~ True
+  TP_SetupDone -> s & awaitingSet .~ True & tPhase .~ TP_SetupTest
   TP_PauseTreatment -> s & awaitingSet .~ True & tPhase .~ TP_SetupTest
   _ -> s
 
@@ -298,12 +314,22 @@ treat ts = forever $ do
   case curTPhase of
     TP_Reset -> atomically $ resetTherac ts
     TP_Datent -> datent ts
-    TP_SetupDone -> atomically $ setTPhase TP_PatientTreatment ts -- the console says "BEAM READY"; Begin doubles as the "B" key here
+    TP_SetupDone -> atomically $ setupDone ts
     TP_SetupTest -> atomically $ setupTest ts
     TP_PatientTreatment -> zapTheSpecimen ts
     TP_PauseTreatment -> waitForProceedOrReset ts
     TP_TerminateTreatment -> waitForReset ts
     TP_Date_Time_IDChanges -> return () -- this + a bunch of other purely cosmetic things will be implemented elsewhere (the c++ class or the UI in unreal engine probably)
+
+-- The console says "BEAM READY". A UI with a "B" command (ExtCallUseBeamOnKey) fires the beam
+-- with ExtCallBeamOn; for the others Begin doubles as the "B" key.
+setupDone :: TMVar TheracState -> STM ()
+setupDone ts = do
+  s <- readTMVar ts
+  if
+    | s ^. resetPending -> setTPhase TP_Reset ts
+    | not (s ^. beamOnKey) -> setTPhase TP_PatientTreatment ts
+    | otherwise -> return ()
 
 waitForProceedOrReset :: TMVar TheracState -> IO ()
 waitForProceedOrReset ts = atomically $ do
@@ -375,8 +401,8 @@ zapTheSpecimen ts = do
             | otherwise ->
                 s
                   & treatmentOutcome .~ "TREATMENT OK"
-                  & displayedDose .~ prescribedDose
-                  & patientDose %~ (+ prescribedDose)
+                  & displayedDose .~ (s ^. prescribedMu)
+                  & patientDose %~ (+ (s ^. prescribedMu))
                   & tPhase .~ TP_TerminateTreatment
 
 -- "They would give messages of low dose rate, V-tilt, H-tilt, and other things", and "some
@@ -405,8 +431,8 @@ externalCallWrap mywc ecti bti cpi be =
       let send = atomically . writeTChan (_wrappedCommsExternalCalls mywc')
       case M.lookup ecti ectMap of
         Nothing -> return ()
-        Just ExtCallSendMEOS -> mapM_ (send . ExternalCall ExtCallSendMEOS) (makeMEOSFromCParams bti cpi be)
-        Just ect -> send (ExternalCall ect newMEOS)
+        Just ExtCallSendMEOS -> mapM_ (\m -> send (ExternalCall ExtCallSendMEOS m 0)) (makeMEOSFromCParams bti cpi be)
+        Just ect -> send (ExternalCall ect newMEOS be)
   )
     `catch` \(_ :: SomeException) -> return ()
 

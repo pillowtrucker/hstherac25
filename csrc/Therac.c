@@ -3,8 +3,14 @@
 #include <stdlib.h>
 HsStablePtr start_machine() {
 
+#if defined(__wasm__)
+  /* single-threaded RTS; when JSFFI is linked in, its constructor has already called hs_init */
+  char * argv[] = {"hstherac25", NULL};
+  int argc      = 1;
+#else
   char * argv[] = {"hstherac25", "+RTS", "-N", "-RTS", NULL};
   int argc      = 4;
+#endif
   char ** pargv = argv;
   hs_init(&argc, &pargv);
   return startMachine();

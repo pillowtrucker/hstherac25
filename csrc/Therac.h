@@ -18,6 +18,12 @@ typedef enum ExtCallType {
   ExtCallHardReset,                /* 6: power cycle */
   ExtCallSet,                      /* 7: set button on the hand control / "set" typed at the console */
   ExtCallFieldLight,               /* 8: hand control rotates the turntable to the field-light position */
+  ExtCallBeamOn,                   /* 9: "B" typed at the console - fires the beam once it says BEAM READY.
+                                          Only needed after ExtCallUseBeamOnKey */
+  ExtCallUseBeamOnKey,             /* 10: this UI has a "B" command: from now on Set-Up Done waits for
+                                          ExtCallBeamOn instead of firing by itself (without it, Begin
+                                          doubles as B). Survives resets */
+  ExtCallPrescribeDose,            /* 11: prescribed monitor units, passed in the beam_energy argument */
   /* clearer aliases for 2 and 3 */
   ExtCallDataEntryComplete = ExtCallToggleDatentComplete,
   ExtCallEditingTakingPlace = ExtCallToggleEditingTakingPlace

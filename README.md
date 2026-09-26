@@ -13,6 +13,18 @@ questions"; where the simulation has to fill a gap, it is listed under [Assumpti
 Leveson's [2017 follow-up](https://www.computer.org/csdl/magazine/co/2017/11/mco2017110008/13rRUxAStVR)
 adds no technical detail.
 
+## The VT100 console
+
+[`vt100/`](vt100/README.md) is a front end that shows the operator's side exactly as far as the
+sources allow. It has three parts, all in C:
+
+- the treatment console program, with the paper's screen layout;
+- a 9600-baud serial line;
+- a DEC VT100, emulated from DEC's manuals and drawing with its own character ROM.
+
+It runs in the browser (compiled to WebAssembly together with this simulator), in your
+terminal, or on a real VT100. Both accidents can be reproduced with the historical keystrokes.
+
 ## Reproducing the accidents from a UI
 
 **Tyler, 1986 (Malfunction 54).** Enter X-ray and press Begin. Setting the bending magnets
@@ -48,6 +60,9 @@ matter for `SendMEOS`. Values the header doesn't define are ignored.
 | 6 | `ExtCallHardReset` | power cycle |
 | 7 | `ExtCallSet` | set button on the hand control |
 | 8 | `ExtCallFieldLight` | hand control rotates the turntable to the field-light position |
+| 9 | `ExtCallBeamOn` | "B" typed at the console: fires the beam once the console says BEAM READY |
+| 10 | `ExtCallUseBeamOnKey` | this UI has a "B" command: BEAM READY waits for call 9 instead of firing by itself |
+| 11 | `ExtCallPrescribeDose` | prescribed monitor units, in the `beam_energy` argument (default 200) |
 
 `request_state_info(machine, n)` returns a string. Free it with `free_state_info`.
 
@@ -113,7 +128,7 @@ two accidents intact and easy to reproduce.
 - **The housekeeper runs every 0.05 s**, twice per Treat tick, so it always sees Class3 between two
   Set-Up Test passes. The paper says tasks are initiated every 0.1 s.
 - **Begin doubles as the "B" (beam on) key**: after Set-Up Done the beam fires without a separate
-  command.
+  command, unless the UI has opted in to a real B with call 10 (the VT100 console does).
 - **The editing flag stays set** once the prescription has been edited. On the PDP-11 an edit took
   keystrokes, long enough for Ptime to see the flag; a UI can send an edit and "back to the
   command line" in the same millisecond.
@@ -131,6 +146,7 @@ cabal build all
 cabal test
 ```
 
-The test suite runs every scenario above against its own machine, all at once, in about 35 s.
-It checks that both accidents happen when provoked the historical way and that the paths the
-original software got right stay safe.
+`HsTherac25-test` runs every scenario above against its own machine, all at once, in about 40 s.
+It checks that both accidents happen when provoked the historical way, and that the paths the
+original software got right stay safe. `vt100-test` does the same through the VT100 console,
+keystroke by keystroke. `vt100/README.md` covers the browser build.
