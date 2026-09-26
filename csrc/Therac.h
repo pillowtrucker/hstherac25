@@ -12,8 +12,10 @@ typedef enum ExtCallType {
                                           flag; only a reset clears it (that is one of the races) */
   ExtCallToggleEditingTakingPlace, /* 3: cursor moved off the command line to edit. Sets the flag;
                                           SendMEOS also sets it */
-  ExtCallReset,                    /* 4: R - after Begin it only takes effect once the magnets are
-                                          set (as in the original Datent) */
+  ExtCallReset,                    /* 4: R - drops the prescription at once; the machine itself resets
+                                          when Treat gets to it, which after Begin is only once the
+                                          magnets are set (as in the original Datent). A prescription
+                                          sent in between is kept */
   ExtCallProceed,                  /* 5: P - only during a treatment pause */
   ExtCallHardReset,                /* 6: power cycle */
   ExtCallSet,                      /* 7: set button on the hand control / "set" typed at the console */
@@ -55,7 +57,9 @@ typedef enum StateInfoRequest {
   RequestTurntablePosition, /* 9: where the turntable physically is, e.g. "CollimatorPositionFieldLight" */
   RequestDisplayedDose,     /* 10: monitor units the dose monitor showed for the last attempt */
   RequestPatientDose,       /* 11: rads the patient actually received since the last reset (the real console couldn't show this) */
-  RequestSetButtonPrompt    /* 12: "PRESS SET BUTTON" while the field light is on, else "" */
+  RequestSetButtonPrompt,   /* 12: "PRESS SET BUTTON" while the field light is on, else "" */
+  RequestMagnetBeingSet,    /* 13: bending magnet being set, "1".."4", "0" when none */
+  RequestBendingMagnetFlag  /* 14: "1" while Ptime still looks for edits (the first magnet), else "0" */
 } StateInfoRequest;
 #ifdef __cplusplus
 extern "C" { // only need to export C interface if

@@ -254,6 +254,25 @@ resetWhileBeamReady = do
     `andThen` (reset m >> waitUntil 2000 "reset" ((== "TP_Datent") <$> tphase m))
     `andThen` (beamOn m >> ms 500 >> patientDose m >>= \x -> ensure (x == 0) "B after a reset must not fire")
 
+-- R while the magnets are being set is only acted on once they are done. A prescription entered
+-- again in the meantime used to be wiped when the reset finally happened, leaving the machine in
+-- data entry for good.
+reenteringDuringResetIsKept :: Check
+reenteringDuringResetIsKept = do
+  m <- newMachine
+  sendMEOS m xRay
+  begin m
+  ms 1000
+  reset m
+  ms 500
+  sendMEOS m xRay
+  begin m
+  r <-
+    waitUntil 25000 "the re-entered prescription to be treated" ((== "TP_TerminateTreatment") <$> tphase m)
+      `andThen` (outcome m >>= \o -> ensure (o /= "") "no treatment")
+  d <- describe m
+  pure (either (\e -> Left (e ++ d)) Right r)
+
 -- used to kill the keyboard handler, or poison the state and crash the host on the next request
 badInputFromUIIsIgnored :: Check
 badInputFromUIIsIgnored = do
@@ -283,7 +302,8 @@ scenarios =
     ("Yakima: set at any other time is safe", yakimaSetAtOtherTimesIsSafe),
     ("bad input from the UI is ignored", badInputFromUIIsIgnored),
     ("with a B command, BEAM READY waits for B and the prescribed MU are delivered", beamOnKeyWaitsAndPrescriptionIsHonoured),
-    ("reset works while the console says BEAM READY", resetWhileBeamReady)
+    ("reset works while the console says BEAM READY", resetWhileBeamReady),
+    ("a prescription re-entered while a reset is pending is kept", reenteringDuringResetIsKept)
   ]
 
 main :: IO ()

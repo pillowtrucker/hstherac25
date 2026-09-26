@@ -22,6 +22,12 @@
   artifact, and can publish it on GitHub Pages), on a terminal, or on a real VT100, and has its
   own test suite (`vt100-test`).
 * New calls: 9 beam on (B), 10 opt in to B, 11 prescribed monitor units.
+* R no longer loses a prescription entered while the reset waits for the magnets (the machine
+  used to sit in data entry for good). Requests 13 and 14 show the bending magnets.
+* The web console: RETURN copies the treatment plan into empty dose fields, a live magnet
+  readout, a "How it works" walkthrough with the annotated source, and `therac25-console.zip`
+  under neutral names, built by CI.
+* Licence declared as AGPL-3.0-or-later, matching LICENSE.
 
 ## 0.1.0.0 -- YYYY-mm-dd
 

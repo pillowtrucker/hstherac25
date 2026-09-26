@@ -25,7 +25,8 @@ export const HAND_SET = 1;
 // csrc/Therac.h StateInfoRequest
 export const REQUEST = Object.freeze({
   outcome: 1, subsystem: 2, phase: 3, reason: 4, hardwareBeam: 5, hardwareEnergy: 6, dump: 7,
-  class3: 8, turntable: 9, displayedDose: 10, patientDose: 11, setPrompt: 12,
+  class3: 8, turntable: 9, displayedDose: 10, patientDose: 11, setPrompt: 12, magnet: 13,
+  bendingMagnetFlag: 14,
 });
 
 // local wall-clock time in seconds, for the DATE and TIME fields

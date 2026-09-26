@@ -10,3 +10,4 @@ test/Main
 dist-newstyle-wasm/
 vt100/dist/
 vt100/web/node_modules/
+vt100/package/
