@@ -185,6 +185,15 @@ static void type(session *s, const char *str) {
   }
 }
 
+/* the same at a person's pace: a key every gap_ms */
+static void type_at(session *s, const char *str, double gap_ms) {
+  for (; *str; str++) {
+    char one[2] = {*str, 0};
+    type(s, one);
+    run_for(s, gap_ms - 30);
+  }
+}
+
 static void screen(session *s, char *out) { vt_text(&s->term, out); }
 
 static bool on_screen(session *s, const char *what) {
@@ -230,7 +239,7 @@ static void dump(session *s, result *r) {
   char buf[VT_ROWS * (VT_COLS + 1) + 1];
   screen(s, buf);
   size_t n = strlen(r->failure);
-  snprintf(r->failure + n, sizeof r->failure - n, "\n--- screen ---\n%.1200s", buf);
+  snprintf(r->failure + n, sizeof r->failure - n, "\n--- screen ---\n%s", buf);
 }
 
 /* fills in the whole prescription from the patient name down to the command line */
@@ -386,6 +395,42 @@ static void yakima(result *r) {
   if (r->failure[0]) dump(&s, r);
 }
 
+/* The page's recipe: nothing but RETURN and cursor up after the X, four keys a second */
+static void tyler_with_returns(result *r) {
+  static session s;
+  session_init(&s, 9600, now_ms());
+  wait_for(&s, "COMMAND:", 5000);
+  type_at(&s, "TEST\r\r", 250);
+  double entered = now_ms();
+  type_at(&s, "x\r\r\r\r\r\r\r\r\r\r\r", 250); /* RETURN copies the plan and the room */
+  CHECK(r, on_screen(&s, "202") && s.term.row == 23, "RETURNs should reach COMMAND with the plan filled in");
+  for (int i = 0; i < 11; i++) {
+    press(&s, VK_UP);
+    run_for(&s, 220);
+  }
+  type_at(&s, "e\r", 250);
+  CHECK(r, now_ms() < entered + 7500, "the recipe took too long: %.0f ms", now_ms() - entered);
+  type_at(&s, "\r\r\r\r\r\r\r\r\r\r", 250); /* back down to COMMAND, no hurry now */
+  CHECK(r, wait_for(&s, "BEAM READY", 15000), "no BEAM READY");
+  type(&s, "B\r");
+  CHECK(r, wait_for(&s, "MALFUNCTION 54", 3000), "no Malfunction 54");
+  if (r->failure[0]) dump(&s, r);
+}
+
+/* R while the magnets are being set, then the prescription again at once: the machine resets
+ * when the magnets are done, and must keep what was typed since */
+static void reset_then_reenter(result *r) {
+  static session s;
+  session_init(&s, 9600, now_ms());
+  wait_for(&s, "COMMAND:", 5000);
+  type(&s, "TEST\r\rx\r\r\r\r\r\r\r\r\r\r\r");
+  run_for(&s, 500);
+  type(&s, "R\r");
+  type(&s, "\r\rx\r\r\r\r\r\r\r\r\r\r\r");
+  CHECK(r, wait_for(&s, "BEAM READY", 25000), "stuck after R and re-entry");
+  if (r->failure[0]) dump(&s, r);
+}
+
 static void reset_and_verification(result *r) {
   static session s;
   char buf[64];
@@ -436,6 +481,8 @@ int vt_run_tests(void) {
       {slow_edit_is_safe, {"a slow edit is caught; B plus down arrow fires", {0}}},
       {yakima, {"Yakima: SET as Class3 rolls over gives FLATNESS, no dose shown", {0}}},
       {reset_and_verification, {"unverified rows block B; R clears the prescription", {0}}},
+      {tyler_with_returns, {"Tyler with RETURNs only, at four keys a second", {0}}},
+      {reset_then_reenter, {"R during the magnets, then re-entry at once, gets to BEAM READY", {0}}},
   };
   size_t n = sizeof jobs / sizeof *jobs;
   pthread_t th[16];

@@ -50,6 +50,11 @@ static const char *const site_labels[CONSOLE_SITE_ROWS] = {
 /* The room set-up in Figure A. ASSUMPTION: the patient is already set up when the page opens. */
 static const double room_setup[CONSOLE_SITE_ROWS] = {0.0, 359.2, 14.2, 27.2, 1, 0};
 
+/* The patient's treatment plan: unit rate and time from Figure A, the 202 monitor units from
+ * the Tyler narrative. ASSUMPTION: RETURN on an empty dose field copies it, as it copies the
+ * room settings, so "a quick series of carriage returns would thus complete data entry". */
+static const char *const dose_plan[3] = {"200", "202", "1.00"};
+
 typedef struct {
   int row, col, width;
   bool right; /* right-aligned in [col, col + width) */
@@ -255,6 +260,8 @@ static void accept(console *c) {
     /* "operators could use a carriage return to merely copy the treatment site data" */
     int i = f - F_GANTRY;
     format_site(i, c->actual[i], c->text[f], sizeof c->text[f], true);
+  } else if (!c->text[f][0] && f >= F_RATE && f <= F_TIME) {
+    strcpy(c->text[f], dose_plan[f - F_RATE]);
   }
   if (!valid(c, f)) {
     bell(c);

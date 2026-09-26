@@ -454,6 +454,11 @@ function showHidden() {
   const beam = therac.info(REQUEST.hardwareBeam);
   const kev = Number(therac.info(REQUEST.hardwareEnergy));
   out("i-phase").textContent = phase;
+  // Ptime only looks for edits while the bending magnet flag is set, during the first magnet
+  const magnet = Number(therac.info(REQUEST.magnet));
+  const watching = therac.info(REQUEST.bendingMagnetFlag) === "1";
+  out("i-magnets").textContent =
+    magnet === 0 ? (beam === "BeamTypeUndefined" ? "–" : "set") : `setting ${magnet} of 4: an edit now is ${watching ? "noticed" : "missed"}`;
   out("i-class3").textContent = String(c3).padStart(3, " ");
   out("i-class3-bar").style.width = `${(c3 / 255) * 100}%`;
   out("i-turntable").textContent = TURNTABLE[therac.info(REQUEST.turntable)] ?? "–";
