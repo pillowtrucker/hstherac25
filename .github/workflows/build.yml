@@ -47,9 +47,15 @@ jobs:
 #          cabal configure --enable-tests --enable-benchmarks --disable-documentation --disable-shared --enable-static
 #          cabal build all --dry-run
       - name: Configure the build
-#        if: ${{ matrix.os == 'ubuntu-latest' }}
+        shell: bash
         run: |
-          cabal configure --enable-tests --enable-benchmarks --disable-documentation --enable-shared --disable-static
+          if [ "$RUNNER_OS" = Windows ]; then
+            # GHC on Windows ships no dynamic Haskell libraries, so --enable-shared cannot build
+            # the dependencies; the foreign library is built standalone instead
+            cabal configure --enable-tests --enable-benchmarks --disable-documentation --disable-shared
+          else
+            cabal configure --enable-tests --enable-benchmarks --disable-documentation --enable-shared --disable-static
+          fi
           cabal build all --dry-run
         # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
@@ -80,9 +86,9 @@ jobs:
       - name: Build
         run: cabal build all
 
-#      - name: Run tests
-#        if: ${{ matrix.config.os }} != 'windows-latest'
-#        run: cabal test all
+      - name: Run tests
+        if: matrix.os == 'ubuntu-latest'
+        run: cabal test all
         
       - uses: actions/upload-artifact@v4
         with:

@@ -1,9 +1,16 @@
 #include "Therac.h"
 #include <HsTherac25_stub.h>
+#include <stdlib.h>
 HsStablePtr start_machine() {
 
-  char * argv[] = {"-threaded", "+RTS", "-N", "-RTS", '\0'};
+#if defined(__wasm__)
+  /* single-threaded RTS; when JSFFI is linked in, its constructor has already called hs_init */
+  char * argv[] = {"hstherac25", NULL};
+  int argc      = 1;
+#else
+  char * argv[] = {"hstherac25", "+RTS", "-N", "-RTS", NULL};
   int argc      = 4;
+#endif
   char ** pargv = argv;
   hs_init(&argc, &pargv);
   return startMachine();
@@ -31,3 +38,5 @@ HsPtr request_state_info(
 ) {
   return requestStateInfo(wrapped_comms, state_info_request);
 }
+/* newCString allocates with malloc; free it with the same C runtime that allocated it */
+void free_state_info(HsPtr state_info) { free(state_info); }

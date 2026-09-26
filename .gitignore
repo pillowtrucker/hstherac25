@@ -6,3 +6,7 @@ dist-newstyle/
 *~
 .direnv
 result
+test/Main
+dist-newstyle-wasm/
+vt100/dist/
+vt100/web/node_modules/

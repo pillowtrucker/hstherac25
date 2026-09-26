@@ -2,7 +2,19 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
+
+-- A simulation of the Therac-25 treatment software, following
+--   N. G. Leveson and C. S. Turner, "An Investigation of the Therac-25 Accidents",
+--   IEEE Computer 26(7), July 1993.
+-- Text in "double quotes" in the comments below is quoted from that paper.
+--
+-- The two software races the paper blames for the Tyler (Malfunction 54) and
+-- Yakima (Class3 overflow) overdoses are reproduced ON PURPOSE. Everything else
+-- (the plumbing between this module and the UIs) is meant to be boringly correct.
+-- README.md lists which details come from the paper and which are assumptions.
 
 module HsTherac25 (externalCallWrap, startMachine, requestStateInfo, theracState, externalCalls, TheracState (..), WrappedComms (..)) where
 
@@ -18,15 +30,16 @@ import Control.Concurrent.STM
     readTChan,
     readTMVar,
     retry,
-    swapTMVar,
     takeTMVar,
     writeTChan,
   )
-import Control.Lens (ASetter, Getting, makeFields, (%~), (.~), (^.))
+import Control.Exception (SomeException, catch)
+import Control.Lens (ASetter, Getting, makeFields, (%~), (&), (.~), (^.))
 import Control.Lens.Tuple (Field1 (_1), Field2 (_2))
-import Control.Monad (forever, void, when)
+import Control.Monad (forever, unless, when)
+import Data.Bits (clearBit, setBit)
 import Data.Map.Strict qualified as M
-import Data.Maybe (fromJust)
+import Data.Word (Word16, Word8)
 import Foreign.C.String (CString, newCString)
 import Foreign.C.Types ()
 import Foreign.StablePtr
@@ -39,7 +52,10 @@ import System.Random (randomRIO)
 data TPhase = TP_Reset | TP_Datent | TP_SetupDone | TP_SetupTest | TP_PatientTreatment | TP_PauseTreatment | TP_TerminateTreatment | TP_Date_Time_IDChanges
   deriving (Eq, Show)
 
-data CollimatorPosition = CollimatorPositionXRay | CollimatorPositionElectronBeam | CollimatorPositionUndefined
+-- "three cardinal turntable positions: electron beam, X ray, and field light".
+-- CollimatorPositionUndefined only appears on the console side and means "nothing requested yet".
+-- CollimatorPositionFieldLight is only reachable through the hand control (ExtCallFieldLight).
+data CollimatorPosition = CollimatorPositionXRay | CollimatorPositionElectronBeam | CollimatorPositionUndefined | CollimatorPositionFieldLight
   deriving (Eq, Show)
 
 type CollimatorPositionInt = Int
@@ -55,22 +71,25 @@ data BeamType = BeamTypeXRay | BeamTypeElectron | BeamTypeUndefined
 btMap :: M.Map BeamTypeInt BeamType
 btMap = M.fromList [(1, BeamTypeXRay), (2, BeamTypeElectron), (3, BeamTypeUndefined)]
 
--- datent complete is actually "begin treatment"
-data ExtCallType = ExtCallSendMEOS | ExtCallToggleDatentComplete | ExtCallToggleEditingTakingPlace | ExtCallReset | ExtCallProceed | ExtCallHardReset
+-- ExtCallToggleDatentComplete and ExtCallToggleEditingTakingPlace keep their old names and numbers
+-- for the UIs, but they SET their flag now (see `keyboardHandler`)
+data ExtCallType = ExtCallSendMEOS | ExtCallToggleDatentComplete | ExtCallToggleEditingTakingPlace | ExtCallReset | ExtCallProceed | ExtCallHardReset | ExtCallSet | ExtCallFieldLight | ExtCallBeamOn | ExtCallUseBeamOnKey | ExtCallPrescribeDose
 
 type ExtCallTypeInt = Int
 
 ectMap :: M.Map ExtCallTypeInt ExtCallType
-ectMap = M.fromList [(1, ExtCallSendMEOS), (2, ExtCallToggleDatentComplete), (3, ExtCallToggleEditingTakingPlace), (4, ExtCallReset), (5, ExtCallProceed), (6, ExtCallHardReset)]
+ectMap = M.fromList [(1, ExtCallSendMEOS), (2, ExtCallToggleDatentComplete), (3, ExtCallToggleEditingTakingPlace), (4, ExtCallReset), (5, ExtCallProceed), (6, ExtCallHardReset), (7, ExtCallSet), (8, ExtCallFieldLight), (9, ExtCallBeamOn), (10, ExtCallUseBeamOnKey), (11, ExtCallPrescribeDose)]
 
 data ExternalCall = ExternalCall
   { _ecType :: ExtCallType,
-    _ecMEOS :: MEOS
+    _ecMEOS :: MEOS,
+    _ecValue :: Int -- ExtCallPrescribeDose: monitor units
   }
 
 type BeamEnergy = Int
 
--- Mode/Energy Offset
+-- Mode/Energy Offset. In the real machine a 2-byte variable: one byte used by Datent to set the
+-- beam parameters, the other used by Hand to position the turntable.
 data MEOS = MEOS
   { _mEOSDatentParams :: (BeamType, BeamEnergy),
     _mEOSHandParams :: CollimatorPosition
@@ -82,39 +101,66 @@ $(makeFields ''MEOS)
 newMEOS :: MEOS
 newMEOS = MEOS (BeamTypeUndefined, 1477) CollimatorPositionUndefined
 
-makeMEOSFromCParams :: BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> MEOS
-makeMEOSFromCParams bti cpi be =
-  let bt = fromJust $ M.lookup bti btMap
-      cp = fromJust $ M.lookup cpi cpMap
-   in MEOS (bt, be) cp
+-- Nothing for values the C header doesn't define (including its own *CheekyPadding = 0).
+makeMEOSFromCParams :: BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> Maybe MEOS
+makeMEOSFromCParams bti cpi be = do
+  bt <- M.lookup bti btMap
+  cp <- M.lookup cpi cpMap
+  pure $ MEOS (bt, be) cp
 
 data TheracState = TheracState
-  { _theracStateClass3 :: Int, -- fake unsigned byte, incremented by `TP_SetupTest`, which should also set _theracStateClass3Ignore on actual 0 and on overflow
-    _theracStateFSmall :: Bool, -- set by `chkcol`, read by `TP_SetupTest`
-    _theracStateConsoleMeos :: MEOS, -- set by `keyboardHandler`, read by `TP_Datent` and `hand`, the desired hardware state
+  { _theracStateClass3 :: Word8, -- one byte, incremented by every pass through Set-Up Test, so it is 0 on every 256th pass
+    _theracStateFMal :: Word16, -- F$mal, the interlock/malfunction word. Bit 9 = upper collimator inconsistent (written by `chkcol`), read by Set-Up Test
+    _theracStateConsoleMeos :: MEOS, -- set by the keyboard handler; read by Datent (beam) and by Hand (turntable)
     _theracStateTPhase :: TPhase, -- used by `treat` - treatment phase
-    _theracStateDataEntryComplete :: Bool, -- set by `keyboardHandler`, read by `treat`
-    _theracStateBendingMagnetFlag :: Bool, -- set by magnet, read by `pTime`
-    _theracStateEditingTakingPlace :: Bool, -- set by `keyboardHandler`, read by `pTime`
-    _theracStateHardwareMeos :: MEOS, -- the actual parameters set in the hardware
-    _theracStateTreatmentOutcome :: String, -- outcome of last treatment attempt
-    _theracStateResetPending :: Bool, -- set by `keyboardHandler`, read by `treat` (datent)
-    _theracStateClass3Ignore :: Bool, -- this is going to be way nicer to implement than actually adding a silently-overflowing Word8. we set this every time class3 % 255 == 0 && class3 == 0.
-    _theracStateMalfunctionCount :: Int
+    _theracStateDataEntryComplete :: Bool, -- set by the keyboard handler when the cursor reaches the command line. Only a reset clears it
+    _theracStateBendingMagnetFlag :: Bool, -- set by `magnet`, cleared by `pTime` (at the end of the FIRST pTime - that's the bug)
+    _theracStateEditingTakingPlace :: Bool, -- set by the keyboard handler when the prescription is edited; only a reset clears it
+    _theracStateHardwareMeos :: MEOS, -- what the machine is really doing: datentParams = beam parameters Datent output, handParams = where the turntable physically is
+    _theracStateTreatmentOutcome :: String, -- message for the last beam-on attempt
+    _theracStateResetPending :: Bool, -- set by the keyboard handler (R)
+    _theracStateMalfunctionCount :: Int, -- pauses during this treatment; the 5th one suspends
+    _theracStateTreatmentSuspended :: Bool, -- "treatment suspend, which required a complete machine reset to restart"
+    _theracStateAwaitingSet :: Bool, -- the hand control put the turntable in field-light position; console says "PRESS SET BUTTON"
+    _theracStateTurntableTarget :: CollimatorPosition, -- where the turntable motor is driving to
+    _theracStateTurntableEta :: Int, -- housekeeper passes until it gets there
+    _theracStateDisplayedDose :: Int, -- monitor units the dose monitor SHOWED for the last attempt
+    _theracStatePatientDose :: Int, -- rads the patient ACTUALLY received since the last reset. The real console had no way to show this
+    _theracStatePrescribedMu :: Int, -- monitor units the console prescribed; a normal treatment delivers and shows this
+    _theracStateBeamOnKey :: Bool -- the UI has a "B" command (ExtCallUseBeamOnKey): Set-Up Done waits for it instead of firing by itself
   }
   deriving (Eq, Show)
 
 $(makeFields ''TheracState)
 
-newTherac :: TheracState
-newTherac = TheracState 1 True newMEOS TP_Datent False False True newMEOS "" False False 0
+-- "Typical single therapeutic doses are in the 200-rad range". Used until the UI sends
+-- ExtCallPrescribeDose.
+prescribedDose :: Int
+prescribedDose = 200
 
-resetTherac :: TMVar TheracState -> STM ()
-resetTherac ts = do
-  ts' <- readTMVar ts
-  let preservedClass3 = ts' ^. class3
-      preservedClass3Ignore = ts' ^. class3Ignore
-  void $ swapTMVar ts $ newTherac {_theracStateClass3 = preservedClass3, _theracStateClass3Ignore = preservedClass3Ignore}
+newTherac :: TheracState
+newTherac =
+  TheracState
+    { _theracStateClass3 = 1,
+      _theracStateFMal = 0,
+      _theracStateConsoleMeos = newMEOS,
+      _theracStateTPhase = TP_Datent,
+      _theracStateDataEntryComplete = False,
+      _theracStateBendingMagnetFlag = False,
+      _theracStateEditingTakingPlace = False,
+      _theracStateHardwareMeos = newMEOS & handParams .~ CollimatorPositionFieldLight, -- power up with no beam expected
+      _theracStateTreatmentOutcome = "",
+      _theracStateResetPending = False,
+      _theracStateMalfunctionCount = 0,
+      _theracStateTreatmentSuspended = False,
+      _theracStateAwaitingSet = False,
+      _theracStateTurntableTarget = CollimatorPositionFieldLight,
+      _theracStateTurntableEta = 0,
+      _theracStateDisplayedDose = 0,
+      _theracStatePatientDose = 0,
+      _theracStatePrescribedMu = prescribedDose,
+      _theracStateBeamOnKey = False
+    }
 
 data WrappedComms = WrappedComms
   { _wrappedCommsTheracState :: TMVar TheracState,
@@ -123,18 +169,115 @@ data WrappedComms = WrappedComms
 
 $(makeFields ''WrappedComms)
 
+-- timing
+
+-- "Tasks are initiated every 0.1 second"
+schedulerTick :: Int
+schedulerTick = 100000
+
+-- The housekeeper runs twice per Treat tick so it always gets a look at Class3 between two
+-- Set-Up Test passes. (The paper only says tasks run every 0.1 s; see README.)
+housekeeperTick :: Int
+housekeeperTick = schedulerTick `div` 2
+
+-- "Setting the bending magnets takes about 8 seconds." The paper only says "several magnets".
+numMagnets :: Int
+numMagnets = 4
+
+hysteresisDelay :: Int
+hysteresisDelay = 2000000
+
+pTimePoll :: Int
+pTimePoll = 20000
+
+-- Not in the paper. This is how long the turntable is still in the wrong place after it is
+-- told to move, i.e. how wide the Yakima window is. See README.
+turntableTravelPasses :: Int
+turntableTravelPasses = 2000000 `div` housekeeperTick
+
+-- "This convenient and simple feature could be invoked a maximum of five times before the
+-- machine automatically suspended treatment"
+maxPauses :: Int
+maxPauses = 5
+
+-- Not in the paper; "Malfunction messages were commonplace". High enough that P becomes a
+-- habit, low enough that normal treatments finish.
+spuriousPausePercent :: Int
+spuriousPausePercent = 30
+
 -- all of the helper functions that aren't part of the therac software are mercifully doing most things atomically
 
-toggleBoolFieldInStruct :: ASetter a a Bool Bool -> TMVar a -> STM ()
-toggleBoolFieldInStruct ff ts = takeTMVar ts >>= \l -> putTMVar ts (ff %~ not $! l)
+modifyTherac :: TMVar TheracState -> (TheracState -> TheracState) -> STM ()
+modifyTherac ts f = takeTMVar ts >>= \l -> putTMVar ts $! f l
 
--- BEGIN virtual task keyboardhandler - sets dataEntrycomplete when the cursor leaves the screen after committing Datent data B[egin], sets editingTakingPlace, sends MEOS every time it is changed on screen, sends R[eset] command, sends P[roceed]
+setFieldInStruct :: ASetter a1 a1 a2 b -> b -> TMVar a1 -> STM ()
+setFieldInStruct ff fv ts = takeTMVar ts >>= \l -> putTMVar ts $! (ff .~ fv $ l)
 
-toggleEditingTakingPlace :: TMVar TheracState -> STM ()
-toggleEditingTakingPlace = toggleBoolFieldInStruct editingTakingPlace
+setTPhase :: (HasTPhase a1 b) => b -> TMVar a1 -> STM ()
+setTPhase = setFieldInStruct tPhase
 
-toggleDatentComplete :: TMVar TheracState -> STM ()
-toggleDatentComplete = toggleBoolFieldInStruct dataEntryComplete
+readFieldFromStruct :: Getting b s b -> TMVar s -> STM b
+readFieldFromStruct ff ts = readTMVar ts >>= \l -> return $ l ^. ff
+
+-- soft reset (R): a new treatment. Class3 is never re-initialised, and the turntable
+-- physically stays where it is. Whether the UI has a "B" command is not the treatment's business.
+resetTherac :: TMVar TheracState -> STM ()
+resetTherac ts = modifyTherac ts $ \s ->
+  newTherac
+    & class3 .~ (s ^. class3)
+    & hardwareMeos . handParams .~ (s ^. hardwareMeos . handParams)
+    & turntableTarget .~ (s ^. hardwareMeos . handParams)
+    & beamOnKey .~ (s ^. beamOnKey)
+
+-- the turntable position the console is asking for; the UIs usually send it, otherwise it follows the mode
+requestedTurntable :: MEOS -> CollimatorPosition
+requestedTurntable m = case m ^. handParams of
+  CollimatorPositionUndefined -> case m ^. datentParams . _1 of
+    BeamTypeXRay -> CollimatorPositionXRay
+    BeamTypeElectron -> CollimatorPositionElectronBeam
+    BeamTypeUndefined -> CollimatorPositionUndefined
+  p -> p
+
+-- BEGIN virtual task keyboardhandler
+
+keyboardHandler :: TMVar TheracState -> ExternalCall -> STM ()
+keyboardHandler ts (ExternalCall ect m v) = case ect of
+  ExtCallSendMEOS -> editMEOS m ts
+  ExtCallToggleDatentComplete -> cursorToCommandLine ts
+  ExtCallToggleEditingTakingPlace -> setFieldInStruct editingTakingPlace True ts
+  ExtCallReset -> setFieldInStruct resetPending True ts
+  ExtCallProceed -> proceedTreatment ts
+  ExtCallHardReset -> modifyTherac ts $ \s -> newTherac & beamOnKey .~ (s ^. beamOnKey)
+  ExtCallSet -> setFieldInStruct awaitingSet False ts
+  ExtCallFieldLight -> fieldLight ts
+  ExtCallBeamOn -> beamOn ts
+  ExtCallUseBeamOnKey -> setFieldInStruct beamOnKey True ts
+  ExtCallPrescribeDose -> when (v > 0) $ setFieldInStruct prescribedMu v ts
+
+-- An edit of the prescription. While Datent is running it just lands in MEOS - that's the Tyler
+-- race. Once Datent has exited, the edit sends the machine back through Datent. The paper doesn't
+-- say what caught slow edits, only that "data-entry speed during editing was the key factor"
+-- (ASSUMPTION, see README).
+editMEOS :: MEOS -> TMVar TheracState -> STM ()
+editMEOS m ts = modifyTherac ts $ \s ->
+  let s' = s & consoleMeos .~ m & editingTakingPlace .~ True
+   in if m /= s ^. consoleMeos && s ^. tPhase `elem` [TP_SetupTest, TP_SetupDone, TP_PauseTreatment]
+        then s' & tPhase .~ TP_Datent
+        else s'
+
+-- "the data-entry completion variable only indicates that the cursor has been down to the
+-- command line, not that it is still there. A potential race condition is set up."
+-- So: set it, and nothing but a reset clears it.
+-- (editingTakingPlace is left alone: on the PDP-11 an edit took keystrokes, long enough for Ptime to
+-- see the flag, but a UI can send "edit" and "back to the command line" in the same millisecond.)
+cursorToCommandLine :: TMVar TheracState -> STM ()
+cursorToCommandLine = setFieldInStruct dataEntryComplete True
+
+-- "She hit the one-key command 'B' (for 'beam on') to begin the treatment." Only means
+-- anything once the console says BEAM READY.
+beamOn :: TMVar TheracState -> STM ()
+beamOn ts = modifyTherac ts $ \s ->
+  if s ^. tPhase == TP_SetupDone then s & tPhase .~ TP_PatientTreatment else s
 
 proceedTreatment :: TMVar TheracState -> STM ()
 proceedTreatment ts = do
@@ -143,64 +286,57 @@ proceedTreatment ts = do
     TP_PauseTreatment -> setTPhase TP_PatientTreatment ts
     _ -> return ()
 
-setResetPending :: TMVar TheracState -> STM ()
-setResetPending = setFieldInStruct resetPending True
-
-setTheracConsoleMEOS :: MEOS -> TMVar TheracState -> STM ()
-setTheracConsoleMEOS = setFieldInStruct consoleMeos
+-- The hand control in the treatment room rotates the turntable to the field-light position to
+-- check the patient's position; "The console displays the message 'Press set button' while
+-- the turntable is in the field-light position." At Yakima this happened during a pause
+-- between exposures; going back to Set-Up Test from a pause is an ASSUMPTION.
+fieldLight :: TMVar TheracState -> STM ()
+fieldLight ts = modifyTherac ts $ \s -> case s ^. tPhase of
+  TP_Datent -> s & awaitingSet .~ True
+  TP_SetupTest -> s & awaitingSet .~ True
+  TP_SetupDone -> s & awaitingSet .~ True & tPhase .~ TP_SetupTest
+  TP_PauseTreatment -> s & awaitingSet .~ True & tPhase .~ TP_SetupTest
+  _ -> s
 
 -- END virtual task keyboardhandler
 
 handleExternalCalls :: TMVar TheracState -> TChan ExternalCall -> IO ()
-handleExternalCalls ts ecc = do
-  ecall <- atomically $ readTChan ecc
-  case ecall of
-    ExternalCall ExtCallReset _ -> atomically $ setResetPending ts
-    ExternalCall ExtCallToggleDatentComplete _ -> atomically $ toggleDatentComplete ts
-    ExternalCall ExtCallToggleEditingTakingPlace _ -> atomically $ toggleEditingTakingPlace ts
-    ExternalCall ExtCallProceed _ -> atomically $ proceedTreatment ts
-    ExternalCall ExtCallSendMEOS m -> atomically $ setTheracConsoleMEOS m ts
-    ExternalCall ExtCallHardReset _ -> atomically $ resetTherac ts
-  handleExternalCalls ts ecc
-
-setFieldInStruct :: ASetter a1 a1 a2 b -> b -> TMVar a1 -> STM ()
-setFieldInStruct ff fv ts = takeTMVar ts >>= \l -> putTMVar ts (ff .~ fv $ l)
-
-setTPhase :: (HasTPhase a1 b) => b -> TMVar a1 -> STM ()
-setTPhase = setFieldInStruct tPhase
-
-readFieldFromStruct :: Getting b s b -> TMVar s -> STM b
-readFieldFromStruct ff ts = readTMVar ts >>= \l -> return $ l ^. ff
+handleExternalCalls ts ecc = forever $ atomically $ readTChan ecc >>= keyboardHandler ts
 
 -- task - treatment monitor - the supervisor task basically
+-- "Treat ... directs and monitors patient setup and treatment via eight operating phases.
+-- These are called as subroutines, depending on the value of the Tphase control variable.
+-- Following the execution of a particular subroutine, Treat reschedules itself."
 treat :: TMVar TheracState -> IO ()
-treat ts = do
-  threadDelay 1666
+treat ts = forever $ do
+  threadDelay schedulerTick
   curTPhase <- atomically $ readFieldFromStruct tPhase ts
-  --  isPendingReset <- atomically $ readFieldFromStruct resetPending ts
   case curTPhase of
     TP_Reset -> atomically $ resetTherac ts
     TP_Datent -> datent ts
-    TP_SetupDone -> atomically $ setTPhase TP_PatientTreatment ts -- it's probably fine to just skip over this
-    TP_SetupTest -> setupTest ts
+    TP_SetupDone -> atomically $ setupDone ts
+    TP_SetupTest -> atomically $ setupTest ts
     TP_PatientTreatment -> zapTheSpecimen ts
-    TP_PauseTreatment -> do
-      mc <- atomically $ readFieldFromStruct malfunctionCount ts
-      if mc > 4
-        then
-          atomically $ setTPhase TP_Reset ts
-        else
-          waitForUnpause ts
+    TP_PauseTreatment -> waitForProceedOrReset ts
     TP_TerminateTreatment -> waitForReset ts
     TP_Date_Time_IDChanges -> return () -- this + a bunch of other purely cosmetic things will be implemented elsewhere (the c++ class or the UI in unreal engine probably)
-  treat ts
 
-waitForUnpause :: TMVar TheracState -> IO ()
-waitForUnpause ts = atomically $ do
-  tp <- readFieldFromStruct tPhase ts
-  case tp of
-    TP_PauseTreatment -> retry
-    _ -> return ()
+-- The console says "BEAM READY". A UI with a "B" command (ExtCallUseBeamOnKey) fires the beam
+-- with ExtCallBeamOn; for the others Begin doubles as the "B" key.
+setupDone :: TMVar TheracState -> STM ()
+setupDone ts = do
+  s <- readTMVar ts
+  if
+    | s ^. resetPending -> setTPhase TP_Reset ts
+    | not (s ^. beamOnKey) -> setTPhase TP_PatientTreatment ts
+    | otherwise -> return ()
+
+waitForProceedOrReset :: TMVar TheracState -> IO ()
+waitForProceedOrReset ts = atomically $ do
+  s <- readTMVar ts
+  if s ^. resetPending
+    then setTPhase TP_Reset ts
+    else when (s ^. tPhase == TP_PauseTreatment) retry
 
 waitForReset :: TMVar TheracState -> IO ()
 waitForReset ts = atomically $ do
@@ -208,24 +344,76 @@ waitForReset ts = atomically $ do
   if tsrp then setTPhase TP_Reset ts else retry
 
 -- BEGIN zapping
+
+-- What the beam physically does, given the beam parameters Datent output and where the turntable
+-- really is. Note that the software never compares these two: "The software appears to include
+-- no checks to detect such an incompatibility."
+data Delivery
+  = Treated -- correct setup
+  | TylerOverdose -- X-ray current, turntable in electron position: no target, no flattener
+  | YakimaOverdose -- X-ray current, turntable in field-light position: no target, no scanning, a mirror in the beam
+  | NuisancePause -- electron current with the wrong accessories: not documented, modelled as harmless
+
+beamPhysics :: BeamType -> CollimatorPosition -> Delivery
+beamPhysics BeamTypeXRay CollimatorPositionXRay = Treated
+beamPhysics BeamTypeElectron CollimatorPositionElectronBeam = Treated
+-- "Much greater electron-beam current is required for photon mode (some 100 times greater than
+-- that for electron therapy)" because the flattener is "a very efficient attenuator"
+beamPhysics BeamTypeXRay CollimatorPositionElectronBeam = TylerOverdose
+beamPhysics BeamTypeXRay _ = YakimaOverdose
+beamPhysics _ _ = NuisancePause
+
 zapTheSpecimen :: TMVar TheracState -> IO ()
 zapTheSpecimen ts = do
-  reallyGoodNumber <- randomRIO (12, 53) :: IO Int
-  ts' <- atomically $ readTMVar ts
-  let tscm = ts' ^. consoleMeos
-      tshm = ts' ^. hardwareMeos
-      mc = ts' ^. malfunctionCount
-  atomically $
-    if tscm /= tshm
-      then
-        void $ swapTMVar ts (malfunctionCount .~ mc + 1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ "MALFUNCTION 54" $ ts')))
-      -- I'm not sure if both the race condition and the overflow bug had the same error number but I'm assuming they did.
-      else
-        if reallyGoodNumber > 22
-          then
-            void $ swapTMVar ts (malfunctionCount .~ mc + 1 $ (tPhase .~ TP_PauseTreatment $ (treatmentOutcome .~ ("MALFUNCTION " ++ show reallyGoodNumber) $ ts'))) -- simulate shitty fucking computer doodad breaking all the time to prime people to P(roceed) repeatedly and carelessly
-          else
-            void $ swapTMVar ts (tPhase .~ TP_TerminateTreatment $ (treatmentOutcome .~ "TREATMENT OK" $ ts'))
+  spuriousRoll <- randomRIO (1, 100) :: IO Int
+  spuriousKind <- randomRIO (0, 3) :: IO Int
+  channel <- randomRIO (1, 63) :: IO Int
+  -- "After-the-fact simulations of the accident revealed possible doses of 16,500 to 25,000 rads"
+  tylerRads <- randomRIO (16500, 25000) :: IO Int
+  -- "the dose delivered under these conditions - that is, when the turntable was in the
+  -- field-light position - was on the order of 4,000 to 5,000 rads"
+  yakimaRads <- randomRIO (4000, 5000) :: IO Int
+  atomically $ modifyTherac ts $ \s ->
+    let hw = s ^. hardwareMeos
+        pause msg shown rads =
+          let mc = s ^. malfunctionCount + 1
+              suspend = mc >= maxPauses
+           in s
+                & treatmentOutcome .~ msg
+                & displayedDose .~ shown
+                & patientDose %~ (+ rads)
+                & malfunctionCount .~ mc
+                & treatmentSuspended .~ suspend
+                & tPhase .~ (if suspend then TP_TerminateTreatment else TP_PauseTreatment)
+     in case beamPhysics (hw ^. datentParams . _1) (hw ^. handParams) of
+          -- "Malfunction 54 ... a 'dose input 2' error ... a dose had been delivered that was either too
+          -- high or too low." The saturated ion chamber read low: "6 monitor units delivered, whereas the
+          -- operator had requested 202 monitor units", every time P was pressed.
+          TylerOverdose -> pause "MALFUNCTION 54" 6 tylerRads
+          -- "the console displayed no dose or dose rate. After 5 or 6 seconds, the unit shut down with a
+          -- pause" ... "The machine paused again, this time displaying 'flatness' on the reason line."
+          -- (there's no ion chamber in the field-light position)
+          YakimaOverdose -> pause "FLATNESS" 0 yakimaRads
+          NuisancePause -> pause "LOW DOSE RATE" 0 0
+          Treated
+            -- simulate shitty fucking computer doodad breaking all the time to prime people to P(roceed) repeatedly and carelessly
+            | spuriousRoll <= spuriousPausePercent -> pause (spuriousMessage spuriousKind channel) 0 0
+            | otherwise ->
+                s
+                  & treatmentOutcome .~ "TREATMENT OK"
+                  & displayedDose .~ (s ^. prescribedMu)
+                  & patientDose %~ (+ (s ^. prescribedMu))
+                  & tPhase .~ TP_TerminateTreatment
+
+-- "They would give messages of low dose rate, V-tilt, H-tilt, and other things", and "some
+-- merely consisted of the word 'malfunction' followed by a number from 1 to 64 denoting an
+-- analog/digital channel number". 54 is kept for the real thing.
+spuriousMessage :: Int -> Int -> String
+spuriousMessage kind channel = case kind of
+  0 -> "LOW DOSE RATE"
+  1 -> "H-TILT"
+  2 -> "V-TILT"
+  _ -> "MALFUNCTION " ++ show (if channel >= 54 then channel + 1 else channel)
 
 -- END zapping
 
@@ -234,12 +422,19 @@ foreign export stdcall externalCallWrap :: StablePtr WrappedComms -> ExtCallType
 #else
 foreign export ccall externalCallWrap :: StablePtr WrappedComms -> ExtCallTypeInt -> BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> IO ()
 #endif
+-- Unknown values are dropped here instead of being stored for some other thread to trip over
+-- (an uncaught exception in a foreign export takes the host process down with it).
 externalCallWrap :: StablePtr WrappedComms -> ExtCallTypeInt -> BeamTypeInt -> CollimatorPositionInt -> BeamEnergy -> IO ()
-externalCallWrap mywc ecti bti cpi be = do
-  mywc' <- deRefStablePtr mywc
-  let myc = _wrappedCommsExternalCalls mywc'
-  atomically $ writeTChan myc (ExternalCall (fromJust $ M.lookup ecti ectMap) (makeMEOSFromCParams bti cpi be))
-  return ()
+externalCallWrap mywc ecti bti cpi be =
+  ( do
+      mywc' <- deRefStablePtr mywc
+      let send = atomically . writeTChan (_wrappedCommsExternalCalls mywc')
+      case M.lookup ecti ectMap of
+        Nothing -> return ()
+        Just ExtCallSendMEOS -> mapM_ (\m -> send (ExternalCall ExtCallSendMEOS m 0)) (makeMEOSFromCParams bti cpi be)
+        Just ect -> send (ExternalCall ect newMEOS be)
+  )
+    `catch` \(_ :: SomeException) -> return ()
 
 -- external start machine
 -- hs_exit() will probably kill children threads ?? not sure how else to keep this alive and return from the call on c++ caller's side. need to test
@@ -257,85 +452,106 @@ startMachine = do
   _ <- forkIO $ housekeeper ts
   newStablePtr $ WrappedComms ts ecc
 
-data StateInfoRequest = RequestTreatmentOutcome | RequestActiveSubsystem | RequestTreatmentState | RequestReason | RequestBeamMode | RequestBeamEnergy | RequestDumpFullState
+data StateInfoRequest = RequestTreatmentOutcome | RequestActiveSubsystem | RequestTreatmentState | RequestReason | RequestBeamMode | RequestBeamEnergy | RequestDumpFullState | RequestClass3 | RequestTurntablePosition | RequestDisplayedDose | RequestPatientDose | RequestSetButtonPrompt
 
 type SIRInt = Int
 
 siriMap :: M.Map Int StateInfoRequest
-siriMap = M.fromList [(1, RequestTreatmentOutcome), (2, RequestActiveSubsystem), (3, RequestTreatmentState), (4, RequestReason), (5, RequestBeamMode), (6, RequestBeamEnergy)]
+siriMap = M.fromList [(1, RequestTreatmentOutcome), (2, RequestActiveSubsystem), (3, RequestTreatmentState), (4, RequestReason), (5, RequestBeamMode), (6, RequestBeamEnergy), (7, RequestDumpFullState), (8, RequestClass3), (9, RequestTurntablePosition), (10, RequestDisplayedDose), (11, RequestPatientDose), (12, RequestSetButtonPrompt)]
 
--- external return requested state info
+stateInfo :: TheracState -> SIRInt -> String
+stateInfo ts' siri = case M.lookup siri siriMap of
+  Just RequestTreatmentOutcome -> ts' ^. treatmentOutcome
+  Just RequestActiveSubsystem -> if ts' ^. dataEntryComplete then "TREAT" else "DATA ENTRY"
+  Just RequestTreatmentState -> show $ ts' ^. tPhase
+  Just RequestReason -> let to = ts' ^. treatmentOutcome in if to == "TREATMENT OK" || to == "" then "OPERATOR" else to
+  Just RequestBeamMode -> show $ ts' ^. hardwareMeos . datentParams . _1
+  Just RequestBeamEnergy -> show $ ts' ^. hardwareMeos . datentParams . _2
+  Just RequestDumpFullState -> show ts'
+  Just RequestClass3 -> show $ ts' ^. class3
+  Just RequestTurntablePosition -> show $ ts' ^. hardwareMeos . handParams
+  Just RequestDisplayedDose -> show $ ts' ^. displayedDose
+  Just RequestPatientDose -> show $ ts' ^. patientDose
+  Just RequestSetButtonPrompt -> if ts' ^. awaitingSet then "PRESS SET BUTTON" else ""
+  Nothing -> ""
+
+-- external return requested state info. The string is malloc'd; free it with free_state_info.
 #ifdef mingw32_HOST_OS
 foreign export stdcall requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
 #else
 foreign export ccall requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
 #endif
 requestStateInfo :: StablePtr WrappedComms -> SIRInt -> IO CString
-requestStateInfo mywc siri = do
-  mywc' <- deRefStablePtr mywc
-  let ts = _wrappedCommsTheracState mywc'
-
-  ts' <- atomically $ readTMVar ts
-  newCString $ case M.lookup siri siriMap of
-    Just RequestTreatmentOutcome -> ts' ^. treatmentOutcome
-    Just RequestActiveSubsystem -> if (ts' ^. dataEntryComplete) then "TREAT" else "DATA ENTRY"
-    Just RequestTreatmentState -> show $ ts' ^. tPhase
-    Just RequestReason -> let to = ts' ^. treatmentOutcome in if (to == "TREATMENT OK" || to == "") then "OPERATOR" else to
-    Just RequestBeamMode -> show $ ts' ^. hardwareMeos . datentParams . _1
-    Just RequestBeamEnergy -> show $ ts' ^. hardwareMeos . datentParams . _2
-    Just RequestDumpFullState -> show ts'
-    Nothing -> ""
+requestStateInfo mywc siri =
+  ( do
+      mywc' <- deRefStablePtr mywc
+      ts' <- atomically $ readTMVar (_wrappedCommsTheracState mywc')
+      newCString $ stateInfo ts' siri
+  )
+    `catch` \(_ :: SomeException) -> newCString ""
 
 -- BEGIN TP_SetupTest phase
 
--- `treat` TP_SetupTest subroutine
--- increment Class3 on each cycle
--- every time class3 % 255 == 0 && class3 == 0 we also set _theracStateClass3Ignore and we really zero it out
--- if FSmall == False then set tphase TP_SetupDone
-setupTest :: TMVar TheracState -> IO ()
-setupTest ts = do
-  atomically $ do
-    ts' <- readTMVar ts
-    let c3 = ts' ^. class3
-    let nextTPhase = if ts' ^. fSmall then ts' ^. tPhase else TP_SetupDone
-    case c3 of
-      255 -> void $ swapTMVar ts $ ts' {_theracStateClass3 = 0, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
-      0 -> void $ swapTMVar ts $ ts' {_theracStateClass3 = 1, _theracStateClass3Ignore = True, _theracStateTPhase = nextTPhase}
-      _ -> void $ swapTMVar ts $ ts' {_theracStateClass3 = c3 + 1, _theracStateClass3Ignore = False, _theracStateTPhase = nextTPhase}
+-- `treat` Set-Up Test subroutine. "Every pass through the Set-Up Test routine increments the upper
+-- collimator position check, a shared variable called Class3. If Class3 is nonzero, there is an
+-- inconsistency and treatment should not proceed." ... "After setting the Class3 variable, Set-Up
+-- Test next checks for any malfunctions in the system by checking another shared variable ...
+-- called F$mal ... When F$mal is zero ... the Set-Up Test subroutine sets the Tphase variable
+-- equal to 2". It also waits for the set button while the field light is on.
+-- The AECL fix: "the Class3 variable is set to some fixed nonzero value each time through Set-Up
+-- Test instead of being incremented."
+setupTest :: TMVar TheracState -> STM ()
+setupTest ts = modifyTherac ts $ \s ->
+  let s' = s & class3 %~ (+ 1) -- a Word8, so 255 + 1 == 0, just like the PDP-11 byte
+   in if
+        | s ^. resetPending -> s' & tPhase .~ TP_Reset
+        | not (s ^. awaitingSet) && s ^. fMal == 0 -> s' & tPhase .~ TP_SetupDone
+        | otherwise -> s'
 
 -- END TP_SetupTest phase
 
 -- BEGIN `housekeeper` stuff
--- `housekeeper` subroutine - "analog-to-digital limit checking" -- if Class3 /= 0 then call chkcol
+
+-- `housekeeper` subroutine - "analog/digital limit checking". "Lmtchk first checks the Class3
+-- variable. If Class3 contains a nonzero value, Lmtchk calls the Check Collimator (Chkcol)
+-- subroutine. If Class3 contains zero, Chkcol is bypassed and the upper collimator position check
+-- is not performed." F$mal is rebuilt on every pass, so a bypassed check leaves bit 9 clear
+-- (ASSUMPTION, see README).
 lmtchk :: TMVar TheracState -> STM ()
-lmtchk ts = do
-  ts' <- readTMVar ts
-  let c3i = ts' ^. class3Ignore
-  if c3i
-    then
-      setFieldInStruct fSmall False ts
-    else chkcol ts
+lmtchk ts = modifyTherac ts $ \s ->
+  let s' = s & fMal %~ (`clearBit` 9)
+   in if s ^. class3 /= 0 then chkcol s' else s'
 
--- `housekeeper` subroutine - checks if CollimatorPosition is consistent with MEOS CollimatorPosition (_theracStateConsoleMeos vs _theracStateHardwareMeos), sets F$mall if not
-chkcol :: TMVar TheracState -> STM ()
-chkcol ts = do
-  ts' <- readTMVar ts
-  let tscmcol = ts' ^. consoleMeos . handParams
-  let tshmcol = ts' ^. hardwareMeos . handParams
-  setFieldInStruct fSmall (tscmcol /= tshmcol) ts
+-- "If upper collimator position inconsistent with treatment then set bit 9 of F$mal"
+chkcol :: TheracState -> TheracState
+chkcol s
+  | want /= CollimatorPositionUndefined && s ^. hardwareMeos . handParams /= want = s & fMal %~ (`setBit` 9)
+  | otherwise = s
+  where
+    want = requestedTurntable (s ^. consoleMeos)
 
-syncCollimator :: TMVar TheracState -> STM ()
-syncCollimator ts = do
-  ts' <- readTMVar ts
-  let tscmcol = ts' ^. consoleMeos . handParams
-  void $ swapTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSHandParams = tscmcol}) $ ts'
+-- Hand: "used by another task (Hand) to set the collimator/turntable to the proper position for
+-- the selected mode/energy". Drives the turntable toward what the console asks for (or to the
+-- field-light position while the hand control holds it there). The motor takes a while.
+hand :: TheracState -> TheracState
+hand s
+  | want == CollimatorPositionUndefined || want == cur = s & turntableTarget .~ cur & turntableEta .~ 0
+  | s ^. turntableTarget /= want || s ^. turntableEta <= 0 = s & turntableTarget .~ want & turntableEta .~ turntableTravelPasses
+  | s ^. turntableEta == 1 = s & hardwareMeos . handParams .~ want & turntableEta .~ 0
+  | otherwise = s & turntableEta %~ subtract 1
+  where
+    cur = s ^. hardwareMeos . handParams
+    want = if s ^. awaitingSet then CollimatorPositionFieldLight else requestedTurntable (s ^. consoleMeos)
 
--- task - runs concurrently to other stuff - displays messages to monitor, checks setup verification, decodes info, sets collimator position
+-- task - runs concurrently to other stuff - "takes care of system-status interlocks and limit
+-- checks" - moves the turntable, then checks it. The turntable only moves during data entry and
+-- set-up, so after a Yakima overdose it is still in the field-light position when P is pressed:
+-- "The machine paused again, this time displaying 'flatness'" (ASSUMPTION, see README).
 housekeeper :: TMVar TheracState -> IO ()
 housekeeper ts = forever $ do
-  threadDelay 1666 -- check 60 times per second because I couldn't think of a good way to make this wait cooperatively with STM retry and I don't want to benchmark how fast a cpu core can do this
-  c3i <- atomically $ readFieldFromStruct class3Ignore ts
-  if c3i then return () else atomically $ syncCollimator ts
+  threadDelay housekeeperTick
+  atomically $ modifyTherac ts $ \s ->
+    if s ^. tPhase `elem` [TP_Reset, TP_Datent, TP_SetupTest] then hand s else s
   atomically $ lmtchk ts
 
 -- END `housekeeper` stuff
@@ -343,95 +559,98 @@ housekeeper ts = forever $ do
 -- BEGIN TP_Datent stuff
 
 setBendingMagnetFlag :: TMVar TheracState -> STM ()
-setBendingMagnetFlag = setFieldInStruct dataEntryComplete True
+setBendingMagnetFlag = setFieldInStruct bendingMagnetFlag True
 
 unsetBendingMagnetFlag :: TMVar TheracState -> STM ()
 unsetBendingMagnetFlag = setFieldInStruct bendingMagnetFlag False
 
 -- subroutine - part of `treat` TP_Datent - spin until hysteresis delay expired
--- pseudocode adapted from Leveson 2010
--- repeat
---   if _theracStateBendingMagnetFlag is set then
---     if _theracStateEditingTakingPlace then
---       if _theracStateConsoleMeos changed then exit -- reschedule entire `datent`
--- until hysteresis delay has expired -- 1 seconds per magnet
--- Clear _theracStateBendingMagnetFlag
--- return
-pTime :: TMVar TheracState -> IO Bool
-pTime ts = do
-  -- it's intentional that we use the worst method of reading each value to simulate american engineering
-  tscm' <- atomically $ readFieldFromStruct consoleMeos ts
-  tsbmf <- atomically $ readFieldFromStruct bendingMagnetFlag ts
-  tsetp <- atomically $ readFieldFromStruct editingTakingPlace ts
-  tscm'' <- atomically $ readFieldFromStruct consoleMeos ts -- maybe the check between specified and programmed values was actually less nonsensical in the real hardware but this was reported
-  -- \^ maybe this is where they were trying to check for cosmic rays or some shit ?
-  case (tsbmf, tsetp, tscm' /= tscm'') of
-    (True, True, True) -> return True
-    _ -> do
-      threadDelay 1000000
-      atomically $ unsetBendingMagnetFlag ts -- yes, we unset this after the first execution of the loop
+-- Ptime (Figure 3):
+--   repeat
+--     if bending magnet flag is set then
+--       if editing taking place then
+--         if mode/energy has changed then exit
+--   until hysteresis delay has expired
+--   Clear bending magnet flag
+--   return
+-- "Since Ptime clears it during its first execution, any edits performed during each succeeding
+-- pass through Ptime will not be recognized."
+-- Returns True if it noticed an edit.
+pTime :: TMVar TheracState -> (BeamType, BeamEnergy) -> IO Bool
+pTime ts wanted = go (hysteresisDelay `div` pTimePoll)
+  where
+    go :: Int -> IO Bool
+    go 0 = do
+      atomically $ unsetBendingMagnetFlag ts -- THE Tyler bug. AECL's fix moved this to the end of `magnet`
       return False
+    go n = do
+      -- it's intentional that we read each shared variable separately, like the PDP-11 task did
+      bmf <- atomically $ readFieldFromStruct bendingMagnetFlag ts
+      editing <- atomically $ readFieldFromStruct editingTakingPlace ts
+      current <- atomically $ readFieldFromStruct (consoleMeos . datentParams) ts
+      if bmf && editing && current /= wanted
+        then do
+          atomically $ unsetBendingMagnetFlag ts -- "Ptime clears the bending magnet variable and exits to Magnet"
+          return True
+        else do
+          threadDelay pTimePoll
+          go (n - 1)
 
--- copyMEOSFromConsole :: TMVar TheracState -> STM ()
--- copyMEOSFromConsole ts = do
---  takeTMVar ts >>= \l -> putTMVar ts $ hardwareMeos .~ (l ^. consoleMeos) $ l
-
-copyBeamAndEnergyToHardwareMEOS :: TMVar TheracState -> BeamType -> BeamEnergy -> STM ()
-copyBeamAndEnergyToHardwareMEOS ts wantedBeamType wantedBeamEnergy = do
-  ts' <- readTMVar ts
-  void $ swapTMVar ts $ hardwareMeos .~ ((ts' ^. hardwareMeos) {_mEOSDatentParams = (wantedBeamType, wantedBeamEnergy)}) $ ts'
-
--- subroutine `magnet` - set bending magnet - part of `treat` TP_Datent
--- pseudocode adapted from Leveson 2010
--- Set _theracStateBendingMagnetFlag
--- foreach l_magnet in [mag1,mag2,mag3,mag4,mag5]
---   set _theracStateHardwareMeos ^. datentParams -- just set the same thing 5 times or whatever
---   call Ptime -- 1s delay per magnet
--- return
-magnet :: TMVar TheracState -> BeamType -> BeamEnergy -> IO Bool
-magnet ts wantedBeamType wantedBeamEnergy = do
+-- subroutine `magnet` - set bending magnets - part of `treat` TP_Datent
+-- Magnet (Figure 3):
+--   Set bending magnet flag
+--   repeat
+--     Set next magnet
+--     Call Ptime
+--     if mode/energy has changed, then exit
+--   until all magnets are set
+--   return
+magnet :: TMVar TheracState -> (BeamType, BeamEnergy) -> IO Bool
+magnet ts wanted = do
   atomically $ setBendingMagnetFlag ts
-  let numLoops = 5 :: Int
-  let setTheMagnet n = do
-        if n == 1
-          then return False
-          else do
-            atomically $ copyBeamAndEnergyToHardwareMEOS ts wantedBeamType wantedBeamEnergy
-            shouldSC <- pTime ts -- no I will not be raising an exception to simulate a short-circuit, fuck ghc exceptions
-            if shouldSC
-              then
-                return True
-              else
-                setTheMagnet (n - 1)
-  setTheMagnet numLoops
+  let setMagnets :: Int -> IO Bool
+      setMagnets 0 = return False
+      setMagnets n = do
+        edited <- pTime ts wanted
+        if edited then return True else setMagnets (n - 1)
+  setMagnets numMagnets
+
+-- "it uses the high-order byte to index into a table of preset operating parameters and places
+-- them in the digital-to-analog output table"
+outputParameters :: TMVar TheracState -> (BeamType, BeamEnergy) -> STM ()
+outputParameters ts wanted = setFieldInStruct (hardwareMeos . datentParams) wanted ts
 
 -- subroutine `TP_Datent` - part of `treat`
--- pseudocode adapted from Leveson 2010
--- if _theracStateConsoleMeos specified then
---   call `magnet` -- this actually sets (_theracStateHardwareMeos ^. datentParams)
--- if _theracStateDataEntryComplete then set Tphase to TP_SetupTest
--- if not _theracStateDataEntryComplete then
---   if _theracStateResetPending then set Tphase to TP_Reset
+-- Datent (Figure 3):
+--   if mode/energy specified then
+--   begin
+--     calculate table index
+--     repeat fetch parameter, output parameter, point to next parameter until all parameters set
+--     call Magnet
+--     if mode/energy changed then return
+--   end
+--   if data entry is complete then set Tphase to 3
+--   if data entry is not complete then
+--     if reset command entered then set Tphase to 0
+--   return
+-- We only redo the parameters (and the 8 seconds of magnets) when the console asks for something
+-- other than what was last output. Once Tphase is 3, "Datent is not entered again": an edit made
+-- while `magnet` was past its first pTime is never looked at.
 datent :: TMVar TheracState -> IO ()
 datent ts = do
-  (consoleMEOSBeamType, consoleMEOSBeamEnergy) <- atomically $ readTMVar ts >>= \l -> return $ l ^. consoleMeos . datentParams
-  (hardwareMEOSBeamType, hardwareMEOSBeamEnergy) <- atomically $ readTMVar ts >>= \l -> return $ l ^. hardwareMeos . datentParams
-  sc <-
-    if (hardwareMEOSBeamType /= consoleMEOSBeamType) || (consoleMEOSBeamEnergy /= hardwareMEOSBeamEnergy)
-      then
-        magnet ts consoleMEOSBeamType consoleMEOSBeamEnergy
+  wanted <- atomically $ readFieldFromStruct (consoleMeos . datentParams) ts
+  current <- atomically $ readFieldFromStruct (hardwareMeos . datentParams) ts
+  edited <-
+    if fst wanted /= BeamTypeUndefined && wanted /= current
+      then do
+        atomically $ outputParameters ts wanted
+        magnet ts wanted
       else return False
-  if not sc
-    then do
-      tsdec <- atomically $ readFieldFromStruct dataEntryComplete ts
-      if tsdec
-        then
-          atomically $ setTPhase TP_SetupTest ts
-        else do
-          tsrp <- atomically $ readFieldFromStruct resetPending ts
-          when tsrp $ atomically $ setTPhase TP_Reset ts
-    else do
-      atomically $ setTPhase TP_Datent ts
-      return ()
+  unless edited $ atomically $ do
+    s <- readTMVar ts
+    -- "Initially, the data-entry process forces the operator to enter the mode and energy"
+    if s ^. dataEntryComplete && s ^. consoleMeos . datentParams . _1 /= BeamTypeUndefined
+      then setTPhase TP_SetupTest ts
+      else when (s ^. resetPending) $ setTPhase TP_Reset ts
 
 -- END TP_Datent stuff
