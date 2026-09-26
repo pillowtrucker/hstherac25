@@ -127,7 +127,8 @@ data TheracState = TheracState
     _theracStateDisplayedDose :: Int, -- monitor units the dose monitor SHOWED for the last attempt
     _theracStatePatientDose :: Int, -- rads the patient ACTUALLY received since the last reset. The real console had no way to show this
     _theracStatePrescribedMu :: Int, -- monitor units the console prescribed; a normal treatment delivers and shows this
-    _theracStateBeamOnKey :: Bool -- the UI has a "B" command (ExtCallUseBeamOnKey): Set-Up Done waits for it instead of firing by itself
+    _theracStateBeamOnKey :: Bool, -- the UI has a "B" command (ExtCallUseBeamOnKey): Set-Up Done waits for it instead of firing by itself
+    _theracStateMagnetBeingSet :: Int -- which bending magnet `magnet` is setting, 0 when none; only for the UIs to show
   }
   deriving (Eq, Show)
 
@@ -159,7 +160,8 @@ newTherac =
       _theracStateDisplayedDose = 0,
       _theracStatePatientDose = 0,
       _theracStatePrescribedMu = prescribedDose,
-      _theracStateBeamOnKey = False
+      _theracStateBeamOnKey = False,
+      _theracStateMagnetBeingSet = 0
     }
 
 data WrappedComms = WrappedComms
@@ -219,8 +221,10 @@ setTPhase = setFieldInStruct tPhase
 readFieldFromStruct :: Getting b s b -> TMVar s -> STM b
 readFieldFromStruct ff ts = readTMVar ts >>= \l -> return $ l ^. ff
 
--- soft reset (R): a new treatment. Class3 is never re-initialised, and the turntable
--- physically stays where it is. Whether the UI has a "B" command is not the treatment's business.
+-- soft reset (R), when Treat gets to it: a new treatment. Class3 is never re-initialised, and
+-- the turntable physically stays where it is. Whether the UI has a "B" command is not the
+-- treatment's business. What the console holds was already cleared when R was typed
+-- (`resetRequested`), so anything in it now was entered since, for the next prescription.
 resetTherac :: TMVar TheracState -> STM ()
 resetTherac ts = modifyTherac ts $ \s ->
   newTherac
@@ -228,6 +232,22 @@ resetTherac ts = modifyTherac ts $ \s ->
     & hardwareMeos . handParams .~ (s ^. hardwareMeos . handParams)
     & turntableTarget .~ (s ^. hardwareMeos . handParams)
     & beamOnKey .~ (s ^. beamOnKey)
+    & consoleMeos .~ (s ^. consoleMeos)
+    & dataEntryComplete .~ (s ^. dataEntryComplete)
+    & editingTakingPlace .~ (s ^. editingTakingPlace)
+    & prescribedMu .~ (s ^. prescribedMu)
+
+-- R typed: "an 'R' reset command must be used and the whole prescription reentered". The
+-- keyboard handler drops the prescription at once; Treat resets the machine when it gets there,
+-- which is only after the magnets if they are being set (ASSUMPTION, see README).
+resetRequested :: TheracState -> TheracState
+resetRequested s =
+  s
+    & resetPending .~ True
+    & consoleMeos .~ newMEOS
+    & dataEntryComplete .~ False
+    & editingTakingPlace .~ False
+    & prescribedMu .~ prescribedDose
 
 -- the turntable position the console is asking for; the UIs usually send it, otherwise it follows the mode
 requestedTurntable :: MEOS -> CollimatorPosition
@@ -245,7 +265,7 @@ keyboardHandler ts (ExternalCall ect m v) = case ect of
   ExtCallSendMEOS -> editMEOS m ts
   ExtCallToggleDatentComplete -> cursorToCommandLine ts
   ExtCallToggleEditingTakingPlace -> setFieldInStruct editingTakingPlace True ts
-  ExtCallReset -> setFieldInStruct resetPending True ts
+  ExtCallReset -> modifyTherac ts resetRequested
   ExtCallProceed -> proceedTreatment ts
   ExtCallHardReset -> modifyTherac ts $ \s -> newTherac & beamOnKey .~ (s ^. beamOnKey)
   ExtCallSet -> setFieldInStruct awaitingSet False ts
@@ -452,12 +472,12 @@ startMachine = do
   _ <- forkIO $ housekeeper ts
   newStablePtr $ WrappedComms ts ecc
 
-data StateInfoRequest = RequestTreatmentOutcome | RequestActiveSubsystem | RequestTreatmentState | RequestReason | RequestBeamMode | RequestBeamEnergy | RequestDumpFullState | RequestClass3 | RequestTurntablePosition | RequestDisplayedDose | RequestPatientDose | RequestSetButtonPrompt
+data StateInfoRequest = RequestTreatmentOutcome | RequestActiveSubsystem | RequestTreatmentState | RequestReason | RequestBeamMode | RequestBeamEnergy | RequestDumpFullState | RequestClass3 | RequestTurntablePosition | RequestDisplayedDose | RequestPatientDose | RequestSetButtonPrompt | RequestMagnetBeingSet | RequestBendingMagnetFlag
 
 type SIRInt = Int
 
 siriMap :: M.Map Int StateInfoRequest
-siriMap = M.fromList [(1, RequestTreatmentOutcome), (2, RequestActiveSubsystem), (3, RequestTreatmentState), (4, RequestReason), (5, RequestBeamMode), (6, RequestBeamEnergy), (7, RequestDumpFullState), (8, RequestClass3), (9, RequestTurntablePosition), (10, RequestDisplayedDose), (11, RequestPatientDose), (12, RequestSetButtonPrompt)]
+siriMap = M.fromList [(1, RequestTreatmentOutcome), (2, RequestActiveSubsystem), (3, RequestTreatmentState), (4, RequestReason), (5, RequestBeamMode), (6, RequestBeamEnergy), (7, RequestDumpFullState), (8, RequestClass3), (9, RequestTurntablePosition), (10, RequestDisplayedDose), (11, RequestPatientDose), (12, RequestSetButtonPrompt), (13, RequestMagnetBeingSet), (14, RequestBendingMagnetFlag)]
 
 stateInfo :: TheracState -> SIRInt -> String
 stateInfo ts' siri = case M.lookup siri siriMap of
@@ -473,6 +493,8 @@ stateInfo ts' siri = case M.lookup siri siriMap of
   Just RequestDisplayedDose -> show $ ts' ^. displayedDose
   Just RequestPatientDose -> show $ ts' ^. patientDose
   Just RequestSetButtonPrompt -> if ts' ^. awaitingSet then "PRESS SET BUTTON" else ""
+  Just RequestMagnetBeingSet -> show $ ts' ^. magnetBeingSet
+  Just RequestBendingMagnetFlag -> if ts' ^. bendingMagnetFlag then "1" else "0"
   Nothing -> ""
 
 -- external return requested state info. The string is malloc'd; free it with free_state_info.
@@ -609,11 +631,15 @@ magnet :: TMVar TheracState -> (BeamType, BeamEnergy) -> IO Bool
 magnet ts wanted = do
   atomically $ setBendingMagnetFlag ts
   let setMagnets :: Int -> IO Bool
-      setMagnets 0 = return False
-      setMagnets n = do
-        edited <- pTime ts wanted
-        if edited then return True else setMagnets (n - 1)
-  setMagnets numMagnets
+      setMagnets n
+        | n > numMagnets = return False
+        | otherwise = do
+            atomically $ setFieldInStruct magnetBeingSet n ts
+            edited <- pTime ts wanted
+            if edited then return True else setMagnets (n + 1)
+  edited <- setMagnets 1
+  atomically $ setFieldInStruct magnetBeingSet 0 ts
+  return edited
 
 -- "it uses the high-order byte to index into a table of preset operating parameters and places
 -- them in the digital-to-analog output table"
