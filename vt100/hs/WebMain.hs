@@ -11,7 +11,7 @@ module Main (main) where
 
 import GHC.Wasm.Prim (JSVal, freeJSVal)
 
-foreign import javascript unsafe "console.info('hstherac25: Therac-25 simulator running'); return globalThis;"
+foreign import javascript unsafe "console.info('Therac-25 simulator running'); return globalThis;"
   js_hello :: IO JSVal
 
 foreign export javascript "therac_boot sync" boot :: IO ()

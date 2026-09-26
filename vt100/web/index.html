@@ -4,14 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Therac-25 Console</title>
-<meta name="description" content="The Therac-25 treatment console on a DEC VT100, running the hstherac25 simulator in the browser. Both software races from Leveson and Turner's 1993 investigation can be reproduced.">
+<meta name="description" content="The Therac-25 treatment console on a DEC VT100, with a simulation of the treatment software running in the browser. Both software races from Leveson and Turner's 1993 investigation can be reproduced.">
 <link rel="icon" href="data:,">
+<!-- filled in by build-web.sh from SOURCE_URL; empty means the page links to no repository -->
+<meta name="therac-source" content="">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
   <h1>Therac-25 treatment console</h1>
-  <p>A DEC VT100 on a 9600-baud line to the PDP-11/23, running the <a href="https://github.com/pillowtrucker/hstherac25">hstherac25</a> simulator of the software described by Leveson and Turner, <a href="https://www.cs.columbia.edu/~junfeng/08fa-e6998/sched/readings/therac25.pdf">"An Investigation of the Therac-25 Accidents"</a> (IEEE Computer, 1993).</p>
+  <p>A DEC VT100 on a 9600-baud line to the PDP-11/23, running a simulation of the treatment software described by Leveson and Turner, <a href="https://www.cs.columbia.edu/~junfeng/08fa-e6998/sched/readings/therac25.pdf">"An Investigation of the Therac-25 Accidents"</a> (IEEE Computer, 1993).</p>
 </header>
 
 <main>
@@ -85,7 +87,7 @@
 </main>
 
 <footer class="foot">
-  <p>Screen layout from the paper's Figure A. Terminal behaviour from DEC's VT100 User Guide and Technical Manual, with the characters from the VT100's own character-generator ROM. The simulator in your browser is the same Haskell code other front ends link to, compiled to WebAssembly. <a href="https://github.com/pillowtrucker/hstherac25/blob/main/vt100/README.md">What is sourced and what is assumed</a>.</p>
+  <p>Screen layout from the paper's Figure A. Terminal behaviour from DEC's VT100 User Guide and Technical Manual, with the characters from the VT100's own character-generator ROM. The simulator is Haskell compiled to WebAssembly, running in your browser. <span id="source-note" hidden>Source code, and what is sourced and what is assumed: <a id="source-link" href=""></a>.</span></p>
 </footer>
 
 <script type="module" src="main.js"></script>

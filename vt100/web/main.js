@@ -492,7 +492,18 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+// build-web.sh writes the repository URL here, or leaves it empty
+function showSource() {
+  const url = document.querySelector('meta[name="therac-source"]')?.content.trim();
+  if (!url) return;
+  const link = document.getElementById("source-link");
+  link.href = url;
+  link.textContent = url.replace(/^https?:\/\//, "");
+  document.getElementById("source-note").hidden = false;
+}
+
 async function start() {
+  showSource();
   try {
     therac = await loadTherac(await fetch("therac.wasm"));
   } catch (e) {

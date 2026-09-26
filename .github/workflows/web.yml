@@ -1,7 +1,11 @@
 name: web
 # Builds the VT100 console for the browser (vt100/build-web.sh), reproduces the Tyler accident in
-# the WebAssembly build, and publishes it to GitHub Pages on pushes to main.
-# Pages must be enabled once: Settings -> Pages -> Source: GitHub Actions.
+# the WebAssembly build, and attaches the site to the run as "therac25-console": a folder of static
+# files to put on any web server.
+# Repository variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   SOURCE_URL    repository URL for the page's footer; unset, the page names no repository
+#   DEPLOY_PAGES  "true" to also publish pushes to main on GitHub Pages
+#                 (then also Settings -> Pages -> Source: GitHub Actions)
 on:
   push:
     branches: [main, master]
@@ -37,6 +41,8 @@ jobs:
           restore-keys: wasm-9.12-
 
       - name: Build
+        env:
+          SOURCE_URL: ${{ vars.SOURCE_URL }}
         run: |
           wasm32-wasi-cabal update
           vt100/build-web.sh
@@ -44,13 +50,18 @@ jobs:
       - name: Reproduce the Tyler accident in the browser build
         run: node vt100/test/smoke.mjs vt100/dist
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: therac25-console
+          path: vt100/dist
+
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && vars.DEPLOY_PAGES == 'true'
         with:
           path: vt100/dist
 
   deploy:
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name != 'pull_request' && vars.DEPLOY_PAGES == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     needs: build
     runs-on: ubuntu-latest
     permissions:

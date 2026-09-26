@@ -23,11 +23,15 @@ simulator's Treat, housekeeper and Ptime tasks run on the page's event loop.
 
 ## Running it
 
-**In a browser.** Once GitHub Pages is enabled for the repository (Settings → Pages → Source:
-GitHub Actions), `.github/workflows/web.yml` publishes every push to `main` to
-<https://pillowtrucker.github.io/hstherac25/>. To build it yourself you need GHC's
-WebAssembly toolchain, [ghc-wasm-meta](https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta),
-flavour 9.12:
+**In a browser.** Every CI run of `.github/workflows/web.yml` attaches the finished site as the
+artifact `therac25-console`: a folder of static files that works on any web server (it has to be
+served over HTTP; opening `index.html` from disk won't load the module). The page names no
+repository unless the repository variable `SOURCE_URL` is set. Set `DEPLOY_PAGES` to `true` (and
+Settings → Pages → Source: GitHub Actions) to also publish pushes to `main` on GitHub Pages.
+
+To build it yourself you need GHC's WebAssembly toolchain,
+[ghc-wasm-meta](https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta), flavour 9.12
+(`SOURCE_URL=... vt100/build-web.sh` for a footer link to the source):
 
 ```
 curl https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/raw/master/bootstrap.sh | FLAVOUR=9.12 sh

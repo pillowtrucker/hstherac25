@@ -3,6 +3,7 @@
 # Needs GHC's WebAssembly toolchain (https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta,
 # FLAVOUR=9.12; `source ~/.ghc-wasm/env`) and npm.
 # Serve vt100/dist/ with any static web server, e.g. `python3 -m http.server -d vt100/dist`.
+# SOURCE_URL: repository URL for the page's footer link; unset, the page names no repository.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(dirname "$here")
@@ -27,5 +28,8 @@ fi
 
 (cd "$here/web" && npm ci --no-audit --no-fund --silent)
 cp -r "$here/web/node_modules/@bjorn3/browser_wasi_shim/dist" "$dist/vendor/browser_wasi_shim"
-cp "$here/web/index.html" "$here/web/style.css" "$here/web/main.js" "$here/web/therac.mjs" "$dist/"
+cp "$here/web/style.css" "$here/web/main.js" "$here/web/therac.mjs" "$dist/"
+url=$(printf '%s' "${SOURCE_URL:-}" | sed 's/[&|"<>]//g')
+sed "s|<meta name=\"therac-source\" content=\"\">|<meta name=\"therac-source\" content=\"$url\">|" \
+  "$here/web/index.html" > "$dist/index.html"
 echo "built $dist"
