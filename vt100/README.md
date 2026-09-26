@@ -23,10 +23,10 @@ simulator's Treat, housekeeper and Ptime tasks run on the page's event loop.
 
 ## Running it
 
-**In a browser.** Every CI run of `.github/workflows/web.yml` attaches the finished site as the
-artifact `therac25-console`: a folder of static files that works on any web server (it has to be
-served over HTTP; opening `index.html` from disk won't load the module). The page names no
-repository unless the repository variable `SOURCE_URL` is set. Set `DEPLOY_PAGES` to `true` (and
+**In a browser.** Every CI run of `.github/workflows/web.yml` attaches `therac25-console.zip`
+(see below): a folder of static files that works on any web server. It has to be served over HTTP;
+opening `index.html` from disk won't load the module. The page names no repository unless the
+repository variable `SOURCE_URL` is set. Set `DEPLOY_PAGES` to `true` (and
 Settings → Pages → Source: GitHub Actions) to also publish pushes to `main` on GitHub Pages.
 
 To build it yourself you need GHC's WebAssembly toolchain,
@@ -41,6 +41,16 @@ vt100/build-web.sh
 python3 -m http.server -d vt100/dist      # then open http://localhost:8000
 node vt100/test/smoke.mjs                 # the Tyler accident, typed into the wasm build
 ```
+
+**How it works.** Every build also has `learn.html`: a walkthrough of both races that links
+into the source, rendered as annotated pages under `source/` by `tools/mksource.py`, from the
+walkthrough text in `web/learn.html`. The whole source is there as `source.tar.gz`, with
+`LICENSE.txt` (AGPL-3.0).
+
+**A zip to host anywhere.** `vt100/package-web.sh` builds `vt100/package/therac25-console.zip`.
+Nothing in it names this repository or its owner: the package and its main module are renamed
+for that build, and the script fails if a name slips through. CI builds it on every push and
+attaches it to the run as `therac25-console.zip`.
 
 **On a real terminal.** `cabal run therac-vt100` runs the console program in your terminal,
 paced to 9600 baud (`--baud 0` for full speed). It only sends VT100 control sequences, so it
@@ -57,9 +67,10 @@ treatment, unverified rows and reset. The scenarios run in parallel and take abo
 
 The screen is Figure A of the paper. The cursor starts on PATIENT NAME.
 
-- Type a value and press RETURN to accept it and move to the next field. On an empty
-  treatment-site field (gantry, collimator, wedge, accessory), RETURN copies the value set up in
-  the room, and the row shows VERIFIED.
+- Type a value and press RETURN to accept it and move to the next field. On an empty dose field,
+  RETURN copies the patient's treatment plan (200 MU a minute, 202 MU, 1.00 minute). On an empty
+  treatment-site field (gantry, collimator, wedge, accessory), it copies the value set up in the
+  room, and the row shows VERIFIED.
 - Cursor up (↑) moves back one field. BACK SPACE, DELETE and ← rub out.
 - Down arrow, right arrow and LINE FEED act as RETURN.
 - The last RETURN puts the cursor on COMMAND. Type a command, then RETURN:
@@ -158,6 +169,10 @@ Neither the paper nor DEC says these:
   14.3 against 14.2, so there was some tolerance.
 - **The room set-up** is Figure A's (gantry 0.0, collimator 359.2 / 14.2 / 27.2, wedge 1,
   accessory 0). TREATMENT MODE is filled in as FIX.
+- **RETURN copies the treatment plan** into empty dose fields, as it copies the room settings:
+  the unit rate and time from Figure A, the 202 MU from the Tyler narrative. This makes "a quick
+  series of carriage returns" complete data entry, and puts the Tyler edit within reach of anyone
+  who can press RETURN ten times in a few seconds.
 - **Anything typed and not accepted with RETURN** is dropped when the cursor moves up.
 - **The meaning of `A  1`, `AUTO` and `173777`** is unknown; they are shown as in the figure.
 - **The line runs at 9600 baud.** The paper doesn't give the rate.

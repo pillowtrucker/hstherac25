@@ -80,6 +80,8 @@ matter for `SendMEOS`. Values the header doesn't define are ignored.
 | 10 | dose monitor reading for the last attempt (MU) | `6` |
 | 11 | dose the patient actually received since the last reset (rads) | `17544` |
 | 12 | set prompt | `PRESS SET BUTTON` or `""` |
+| 13 | bending magnet being set | `0` (none) to `4` |
+| 14 | bending magnet flag: Ptime still looks for edits | `1` or `0` |
 
 `TP_TerminateTreatment` with an outcome other than `TREATMENT OK` means treatment suspend;
 press R. After `kill_machine` the Haskell runtime cannot be started again in the same process,
@@ -138,6 +140,9 @@ two accidents intact and easy to reproduce.
 - Field light pressed during a pause goes back to Set-Up Test (at Yakima the operator used it
   between exposures).
 - Class3 and the turntable position survive a soft reset. Hard reset re-initialises everything.
+- **R drops the prescription at once**, but the machine only resets when Treat gets to it, which
+  after Begin is once the magnets are set. A prescription entered in between is kept for the next
+  treatment.
 
 ## Building and testing
 

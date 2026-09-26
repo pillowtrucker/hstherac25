@@ -1,7 +1,7 @@
 name: web
-# Builds the VT100 console for the browser (vt100/build-web.sh), reproduces the Tyler accident in
-# the WebAssembly build, and attaches the site to the run as "therac25-console": a folder of static
-# files to put on any web server.
+# Builds the VT100 console for the browser (vt100/build-web.sh) and reproduces the Tyler accident
+# in the WebAssembly build. Then builds therac25-console.zip (vt100/package-web.sh): the same site
+# under neutral names, to host anywhere, attached to the run as a plain zip.
 # Repository variables (Settings -> Secrets and variables -> Actions -> Variables):
 #   SOURCE_URL    repository URL for the page's footer; unset, the page names no repository
 #   DEPLOY_PAGES  "true" to also publish pushes to main on GitHub Pages
@@ -50,10 +50,16 @@ jobs:
       - name: Reproduce the Tyler accident in the browser build
         run: node vt100/test/smoke.mjs vt100/dist
 
-      - uses: actions/upload-artifact@v4
+      - name: Package the console under neutral names
+        run: vt100/package-web.sh
+
+      - name: Reproduce the Tyler accident in the packaged console
+        run: node vt100/test/smoke.mjs vt100/package/therac25-console
+
+      - uses: actions/upload-artifact@v7
         with:
-          name: therac25-console
-          path: vt100/dist
+          path: vt100/package/therac25-console.zip
+          archive: false
 
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request' && vars.DEPLOY_PAGES == 'true'
